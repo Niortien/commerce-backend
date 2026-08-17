@@ -15,6 +15,64 @@
         }
     ],
     "paths": {
+        "/audit-logs": {
+            "get": {
+                "tags": [
+                    "Audit"
+                ],
+                "summary": "Journal des actions sensibles (ADMIN)",
+                "operationId": "26a564983f3075fc795357c172b819f1",
+                "parameters": [
+                    {
+                        "name": "action",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "entityType",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "dateDebut",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        }
+                    },
+                    {
+                        "name": "dateFin",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Journal d'audit",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
         "/auth/login": {
             "post": {
                 "tags": [
@@ -186,6 +244,105 @@
                         "bearerAuth": []
                     }
                 ]
+            }
+        },
+        "/auth/forgot-password": {
+            "post": {
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Demander un lien de réinitialisation de mot de passe",
+                "operationId": "b13d5efc90e1de6d4e9900240fce9b4d",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "email"
+                                ],
+                                "properties": {
+                                    "email": {
+                                        "type": "string",
+                                        "format": "email"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Lien envoyé si le compte existe",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/reset-password": {
+            "post": {
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Réinitialiser le mot de passe avec un token",
+                "operationId": "bbf02faac4cfbb998aad2b63a843b88c",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "email",
+                                    "token",
+                                    "password"
+                                ],
+                                "properties": {
+                                    "email": {
+                                        "type": "string",
+                                        "format": "email"
+                                    },
+                                    "token": {
+                                        "type": "string"
+                                    },
+                                    "password": {
+                                        "type": "string",
+                                        "minLength": 8
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Mot de passe réinitialisé",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Token invalide ou expiré",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         "/boutiques": {
@@ -814,6 +971,95 @@
                 ]
             }
         },
+        "/fournisseurs": {
+            "get": {
+                "tags": [
+                    "Fournisseurs"
+                ],
+                "summary": "Liste des fournisseurs",
+                "operationId": "61634a5691eead28f7469a4806ed6d60",
+                "parameters": [
+                    {
+                        "name": "search",
+                        "in": "query",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Fournisseurs",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            },
+            "post": {
+                "tags": [
+                    "Fournisseurs"
+                ],
+                "summary": "Créer un fournisseur",
+                "operationId": "5a96bf4c77876abcfc90d0f7bbe6d5fa",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "nom"
+                                ],
+                                "properties": {
+                                    "nom": {
+                                        "type": "string"
+                                    },
+                                    "telephone": {
+                                        "type": "string",
+                                        "nullable": true
+                                    },
+                                    "adresse": {
+                                        "type": "string",
+                                        "nullable": true
+                                    },
+                                    "notes": {
+                                        "type": "string",
+                                        "nullable": true
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Fournisseur créé",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
         "/categories": {
             "get": {
                 "tags": [
@@ -1126,6 +1372,59 @@
                 ]
             }
         },
+        "/produits/{id}/boutique": {
+            "patch": {
+                "tags": [
+                    "Produits"
+                ],
+                "summary": "Réattribuer toutes les variantes d'un produit à une boutique",
+                "operationId": "ea6e996f450eaed8eada9185b3a59402",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "properties": {
+                                    "boutiqueId": {
+                                        "type": "string",
+                                        "format": "uuid",
+                                        "nullable": true
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Variantes réattribuées",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
         "/rapports/ventes": {
             "get": {
                 "tags": [
@@ -1175,6 +1474,110 @@
                 "responses": {
                     "200": {
                         "description": "Ventes par période",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/rapports/depenses": {
+            "get": {
+                "tags": [
+                    "Rapports"
+                ],
+                "summary": "Total des depenses sur une periode",
+                "operationId": "eb5bc772ebe6da38d7c9c366b46c824d",
+                "parameters": [
+                    {
+                        "name": "dateDebut",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        }
+                    },
+                    {
+                        "name": "dateFin",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        }
+                    },
+                    {
+                        "name": "boutiqueId",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Depenses",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/rapports/recette-hebdomadaire": {
+            "get": {
+                "tags": [
+                    "Rapports"
+                ],
+                "summary": "Recette nette (ventes - depenses) par semaine",
+                "operationId": "b825cb8d848592c1a6717e98ac874f29",
+                "parameters": [
+                    {
+                        "name": "dateDebut",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        }
+                    },
+                    {
+                        "name": "dateFin",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "date"
+                        }
+                    },
+                    {
+                        "name": "boutiqueId",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Recette par semaine",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -1378,7 +1781,8 @@
                                 "VENTE",
                                 "PERTE",
                                 "DON",
-                                "RETOUR_FOURNISSEUR"
+                                "RETOUR_FOURNISSEUR",
+                                "DEPENSE"
                             ]
                         }
                     },
@@ -1421,7 +1825,7 @@
                 "tags": [
                     "Sorties"
                 ],
-                "summary": "Créer une sortie / vente",
+                "summary": "Créer une sortie / vente / dépense",
                 "operationId": "ee8e3474e3eaa2048e2409765d3fa5a7",
                 "requestBody": {
                     "required": true,
@@ -1429,8 +1833,7 @@
                         "application/json": {
                             "schema": {
                                 "required": [
-                                    "type",
-                                    "lignes"
+                                    "type"
                                 ],
                                 "properties": {
                                     "type": {
@@ -1439,7 +1842,8 @@
                                             "VENTE",
                                             "PERTE",
                                             "DON",
-                                            "RETOUR_FOURNISSEUR"
+                                            "RETOUR_FOURNISSEUR",
+                                            "DEPENSE"
                                         ]
                                     },
                                     "remiseMontant": {
@@ -1447,10 +1851,17 @@
                                         "nullable": true
                                     },
                                     "notes": {
+                                        "description": "Description de la dépense (requis si type=DEPENSE)",
                                         "type": "string",
                                         "nullable": true
                                     },
+                                    "montant": {
+                                        "description": "Montant de la dépense (requis si type=DEPENSE)",
+                                        "type": "number",
+                                        "nullable": true
+                                    },
                                     "lignes": {
+                                        "description": "Requis sauf si type=DEPENSE",
                                         "type": "array",
                                         "items": {
                                             "properties": {
@@ -1466,7 +1877,8 @@
                                                 }
                                             },
                                             "type": "object"
-                                        }
+                                        },
+                                        "nullable": true
                                     }
                                 },
                                 "type": "object"
@@ -1666,6 +2078,70 @@
                             "application/json": {
                                 "schema": {
                                     "$ref": "#/components/schemas/ApiResponse"
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/stock/transferts": {
+            "post": {
+                "tags": [
+                    "Stock"
+                ],
+                "summary": "Transférer du stock d'une boutique à une autre",
+                "operationId": "b5c17e6be0f8c63d644c8d4e9f9ca9b4",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "varianteId",
+                                    "boutiqueDestinationId",
+                                    "quantite"
+                                ],
+                                "properties": {
+                                    "varianteId": {
+                                        "type": "string",
+                                        "format": "uuid"
+                                    },
+                                    "boutiqueDestinationId": {
+                                        "type": "string",
+                                        "format": "uuid"
+                                    },
+                                    "quantite": {
+                                        "type": "integer"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Transfert effectué",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApiResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Stock insuffisant",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
                                 }
                             }
                         }
@@ -2277,6 +2753,10 @@
     },
     "tags": [
         {
+            "name": "Audit",
+            "description": "Audit"
+        },
+        {
             "name": "Auth",
             "description": "Auth"
         },
@@ -2291,6 +2771,10 @@
         {
             "name": "Entrées",
             "description": "Entrées"
+        },
+        {
+            "name": "Fournisseurs",
+            "description": "Fournisseurs"
         },
         {
             "name": "Produits",
