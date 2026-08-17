@@ -1,4 +1,4 @@
-name: CI/CD — Habit Backend
+name: CI/CD — Habit Laravel 2
 
 on:
   push:
@@ -32,10 +32,10 @@ jobs:
       - name: Checkout du code
         uses: actions/checkout@v4
 
-      - name: Installation de PHP 8.2
+      - name: Installation de PHP 8.1
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
+          php-version: '8.1'
           extensions: mbstring, curl, pdo_mysql, openssl, fileinfo, zip
           coverage: none
 
@@ -90,7 +90,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           password: ${{ secrets.SSH_PASSWORD }}
           script: |
-            cd /home/u526846542/domains/dri-vale.org/public_html
+            cd /home/u526846542/domains/dri-vale.com/public_html
             php artisan down --retry=10
             git pull origin main
             HOME=/home/u526846542 composer install --no-interaction --prefer-dist --optimize-autoloader --no-dev
