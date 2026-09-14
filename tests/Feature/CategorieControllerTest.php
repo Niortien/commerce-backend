@@ -15,12 +15,11 @@ class CategorieControllerTest extends TestCase
 
     public function test_index_retourne_toutes_les_categories(): void
     {
-        $this->actingAsAdmin();
+        $admin = $this->actingAsAdmin();
 
-        // Les migrations de données pré-insèrent des catégories canoniques.
-        // On compte avant d'en ajouter 3 pour vérifier la différence.
-        $before = Categorie::count();
-        Categorie::factory()->count(3)->create();
+        // Le catalogue de catégories est isolé par boutique (tenant).
+        $before = Categorie::where('boutique_id', $admin->boutique_id)->count();
+        Categorie::factory()->count(3)->create(['boutique_id' => $admin->boutique_id]);
 
         $this->getJson('/api/v1/categories')
             ->assertStatus(200)
@@ -32,10 +31,11 @@ class CategorieControllerTest extends TestCase
         $this->getJson('/api/v1/categories')->assertStatus(401);
     }
 
-    public function test_index_interdit_pour_vendeur(): void
+    public function test_index_autorise_pour_vendeur(): void
     {
+        // Lecture ouverte à ADMIN + CAISSIER (voir routes/api.php).
         $this->actingAsVendeur();
-        $this->getJson('/api/v1/categories')->assertStatus(403);
+        $this->getJson('/api/v1/categories')->assertStatus(200);
     }
 
     // ──────────────────── POST /categories ────────────────────
@@ -65,22 +65,23 @@ class CategorieControllerTest extends TestCase
           ->assertJsonPath('data.slug', 'mon-slug-custom');
     }
 
-    public function test_store_rejette_slug_explicite_duplique_en_422(): void
+    public function test_store_rejette_slug_explicite_duplique_en_409(): void
     {
-        $this->actingAsAdmin();
-        Categorie::factory()->create(['slug' => 'slug-existant']);
+        $admin = $this->actingAsAdmin();
+        Categorie::factory()->create(['boutique_id' => $admin->boutique_id, 'slug' => 'slug-existant']);
 
         $this->postJson('/api/v1/categories', [
             'nom'         => 'Nouvelle Cat',
             'slug'        => 'slug-existant',
             'description' => 'Hauts',
-        ])->assertStatus(422);
+        ])->assertStatus(409)
+          ->assertJsonPath('error.code', 'CATEGORIE_SLUG_TAKEN');
     }
 
     public function test_store_rejette_slug_auto_duplique_en_409(): void
     {
-        $this->actingAsAdmin();
-        Categorie::factory()->create(['slug' => 'chemise-bleue']);
+        $admin = $this->actingAsAdmin();
+        Categorie::factory()->create(['boutique_id' => $admin->boutique_id, 'slug' => 'chemise-bleue']);
 
         $this->postJson('/api/v1/categories', [
             'nom'         => 'Chemise Bleue',
@@ -116,8 +117,8 @@ class CategorieControllerTest extends TestCase
 
     public function test_update_modifie_les_champs(): void
     {
-        $this->actingAsAdmin();
-        $cat = Categorie::factory()->create(['nom' => 'Ancien Nom', 'slug' => 'ancien-nom']);
+        $admin = $this->actingAsAdmin();
+        $cat = Categorie::factory()->create(['boutique_id' => $admin->boutique_id, 'nom' => 'Ancien Nom', 'slug' => 'ancien-nom']);
 
         $this->patchJson("/api/v1/categories/{$cat->id}", [
             'description' => 'Bas',
@@ -127,8 +128,8 @@ class CategorieControllerTest extends TestCase
 
     public function test_update_regenere_slug_quand_nom_change(): void
     {
-        $this->actingAsAdmin();
-        $cat = Categorie::factory()->create(['nom' => 'Ancien', 'slug' => 'ancien']);
+        $admin = $this->actingAsAdmin();
+        $cat = Categorie::factory()->create(['boutique_id' => $admin->boutique_id, 'nom' => 'Ancien', 'slug' => 'ancien']);
 
         $this->patchJson("/api/v1/categories/{$cat->id}", ['nom' => 'Nouveau Nom'])
             ->assertStatus(200)
@@ -137,8 +138,8 @@ class CategorieControllerTest extends TestCase
 
     public function test_update_ne_regenere_pas_slug_si_inchange(): void
     {
-        $this->actingAsAdmin();
-        $cat = Categorie::factory()->create(['nom' => 'Meme Nom', 'slug' => 'meme-nom']);
+        $admin = $this->actingAsAdmin();
+        $cat = Categorie::factory()->create(['boutique_id' => $admin->boutique_id, 'nom' => 'Meme Nom', 'slug' => 'meme-nom']);
 
         $this->patchJson("/api/v1/categories/{$cat->id}", ['nom' => 'Meme Nom'])
             ->assertStatus(200)
@@ -147,9 +148,9 @@ class CategorieControllerTest extends TestCase
 
     public function test_update_rejette_collision_de_slug_auto(): void
     {
-        $this->actingAsAdmin();
-        Categorie::factory()->create(['slug' => 'nouveau-nom']);
-        $cat = Categorie::factory()->create(['slug' => 'ancien-slug']);
+        $admin = $this->actingAsAdmin();
+        Categorie::factory()->create(['boutique_id' => $admin->boutique_id, 'slug' => 'nouveau-nom']);
+        $cat = Categorie::factory()->create(['boutique_id' => $admin->boutique_id, 'slug' => 'ancien-slug']);
 
         $this->patchJson("/api/v1/categories/{$cat->id}", ['nom' => 'Nouveau Nom'])
             ->assertStatus(409)
@@ -169,8 +170,8 @@ class CategorieControllerTest extends TestCase
 
     public function test_destroy_supprime_une_categorie_vide(): void
     {
-        $this->actingAsAdmin();
-        $cat = Categorie::factory()->create();
+        $admin = $this->actingAsAdmin();
+        $cat = Categorie::factory()->create(['boutique_id' => $admin->boutique_id]);
 
         $this->deleteJson("/api/v1/categories/{$cat->id}")->assertStatus(200);
         $this->assertDatabaseMissing('categories', ['id' => $cat->id]);
@@ -178,9 +179,9 @@ class CategorieControllerTest extends TestCase
 
     public function test_destroy_bloque_si_produits_lies(): void
     {
-        $this->actingAsAdmin();
-        $cat = Categorie::factory()->create();
-        Produit::factory()->create(['categorie_id' => $cat->id]);
+        $admin = $this->actingAsAdmin();
+        $cat = Categorie::factory()->create(['boutique_id' => $admin->boutique_id]);
+        Produit::factory()->create(['boutique_id' => $admin->boutique_id, 'categorie_id' => $cat->id]);
 
         $this->deleteJson("/api/v1/categories/{$cat->id}")
             ->assertStatus(409)

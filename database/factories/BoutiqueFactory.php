@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\Abonnement;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Str;
 
@@ -19,5 +20,12 @@ class BoutiqueFactory extends Factory
             'is_active' => true,
             'statut'    => 'ACTIF',
         ];
+    }
+
+    public function configure(): static
+    {
+        return $this->afterCreating(function ($boutique) {
+            Abonnement::factory()->create(['boutique_id' => $boutique->id]);
+        });
     }
 }
