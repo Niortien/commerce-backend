@@ -24,6 +24,16 @@ class AuditLogController extends Controller
     {
         $q = AuditLog::with('user')->orderBy('created_at', 'desc');
 
+        $user = $request->user();
+        if ($user->role === 'SUPER_ADMIN') {
+            if ($request->filled('boutiqueId')) {
+                $q->whereHas('user', fn($u) => $u->where('boutique_id', $request->boutiqueId));
+            }
+        } else {
+            // Un ADMIN de boutique ne voit que les actions liées à sa propre boutique.
+            $q->whereHas('user', fn($u) => $u->where('boutique_id', $user->boutique_id));
+        }
+
         if ($request->filled('action'))     $q->where('action', $request->action);
         if ($request->filled('entityType')) $q->where('entity_type', $request->entityType);
         if ($request->filled('dateDebut'))  $q->where('created_at', '>=', $request->dateDebut);

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Exceptions\ConflictException;
+use App\Exceptions\DomainException;
 use App\Exceptions\NotFoundException;
 use App\Http\Traits\ApiResponse;
 use App\Models\AuditLog;
@@ -11,73 +12,43 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 
+/**
+ * Gestion des caissiers PAR l'ADMIN de la boutique — strictement scopée à
+ * sa propre boutique. Un ADMIN ne voit et ne gère jamais les comptes d'une
+ * autre boutique (voir SuperAdminUserController pour la vue transverse du
+ * Super Admin) ni ne peut créer d'ADMIN ou de SUPER_ADMIN par ce biais.
+ */
 class UserController extends Controller
 {
     use ApiResponse;
 
-    /**
-     * @OA\Get(
-     *     path="/users",
-     *     tags={"Utilisateurs"},
-     *     summary="Liste tous les utilisateurs (ADMIN)",
-     *     security={{"bearerAuth":{}}},
-     *     @OA\Response(response=200, description="Liste des utilisateurs",
-     *         @OA\JsonContent(
-     *             @OA\Property(property="data", type="array", @OA\Items(ref="#/components/schemas/User")),
-     *             @OA\Property(property="meta", type="object", nullable=true),
-     *             @OA\Property(property="timestamp", type="string", format="date-time")
-     *         )
-     *     )
-     * )
-     */
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
-        return $this->success(User::with('boutique')->orderBy('created_at')->get());
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        return $this->success(
+            User::where('boutique_id', $boutiqueId)->orderBy('created_at')->get()
+        );
     }
 
-    /**
-     * @OA\Get(
-     *     path="/users/{id}",
-     *     tags={"Utilisateurs"},
-     *     summary="Détail d'un utilisateur (ADMIN)",
-     *     security={{"bearerAuth":{}}},
-     *     @OA\Parameter(name="id", in="path", required=true, @OA\Schema(type="string", format="uuid")),
-     *     @OA\Response(response=200, description="Utilisateur trouvé", @OA\JsonContent(ref="#/components/schemas/ApiResponse")),
-     *     @OA\Response(response=404, description="Introuvable", @OA\JsonContent(ref="#/components/schemas/ErrorResponse"))
-     * )
-     */
-    public function show(string $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
-        $user = User::with('boutique')->find($id);
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $user = User::where('boutique_id', $boutiqueId)->find($id);
         if (!$user) throw new NotFoundException('Utilisateur introuvable', 'USER_NOT_FOUND');
         return $this->success($user);
     }
 
     /**
-     * @OA\Post(
-     *     path="/users",
-     *     tags={"Utilisateurs"},
-     *     summary="Créer un utilisateur (ADMIN)",
-     *     security={{"bearerAuth":{}}},
-     *     @OA\RequestBody(required=true,
-     *         @OA\JsonContent(required={"email","password"},
-     *             @OA\Property(property="email", type="string", format="email"),
-     *             @OA\Property(property="password", type="string", minLength=8),
-     *             @OA\Property(property="role", type="string", enum={"ADMIN","VENDEUR"}),
-     *             @OA\Property(property="boutiqueId", type="string", format="uuid", nullable=true)
-     *         )
-     *     ),
-     *     @OA\Response(response=201, description="Utilisateur créé", @OA\JsonContent(ref="#/components/schemas/ApiResponse")),
-     *     @OA\Response(response=409, description="Email déjà utilisé", @OA\JsonContent(ref="#/components/schemas/ErrorResponse"))
-     * )
+     * Crée un caissier pour la boutique courante. Le rôle est toujours
+     * CAISSIER : seul le Super Admin peut créer un compte ADMIN.
      */
     public function store(Request $request): JsonResponse
     {
+        $boutiqueId = $this->tenantBoutiqueId($request);
+
         $data = $request->validate([
-            'email'      => 'required|email',
-            'password'   => 'required|string|min:8',
-            'role'       => 'sometimes|in:ADMIN,VENDEUR,GERANT',
-            'boutiqueId' => 'sometimes|nullable|uuid|exists:boutiques,id',
+            'email'    => 'required|email',
+            'password' => 'required|string|min:8',
         ]);
 
         if (User::where('email', $data['email'])->exists()) {
@@ -85,76 +56,53 @@ class UserController extends Controller
         }
 
         $user = User::create([
-            'email'        => $data['email'],
+            'email'         => $data['email'],
             'password_hash' => Hash::make($data['password']),
-            'role'         => $data['role'] ?? 'VENDEUR',
-            'boutique_id'  => $data['boutiqueId'] ?? null,
+            'role'          => 'CAISSIER',
+            'boutique_id'   => $boutiqueId,
         ]);
 
-        AuditLog::record($request->user()->id, 'USER_CREATE', 'User', $user->id, "Création utilisateur {$user->email} ({$user->role})");
+        AuditLog::record($request->user()->id, 'USER_CREATE', 'User', $user->id, "Création caissier {$user->email}");
 
         return $this->success($user, 201);
     }
 
-    /**
-     * @OA\Patch(
-     *     path="/users/{id}",
-     *     tags={"Utilisateurs"},
-     *     summary="Modifier un utilisateur (ADMIN)",
-     *     security={{"bearerAuth":{}}},
-     *     @OA\Parameter(name="id", in="path", required=true, @OA\Schema(type="string", format="uuid")),
-     *     @OA\RequestBody(
-     *         @OA\JsonContent(
-     *             @OA\Property(property="email", type="string", format="email"),
-     *             @OA\Property(property="password", type="string", minLength=8),
-     *             @OA\Property(property="role", type="string", enum={"ADMIN","VENDEUR"}),
-     *             @OA\Property(property="boutiqueId", type="string", format="uuid", nullable=true)
-     *         )
-     *     ),
-     *     @OA\Response(response=200, description="Mis à jour", @OA\JsonContent(ref="#/components/schemas/ApiResponse")),
-     *     @OA\Response(response=404, description="Introuvable", @OA\JsonContent(ref="#/components/schemas/ErrorResponse"))
-     * )
-     */
     public function update(Request $request, string $id): JsonResponse
     {
-        $user = User::find($id);
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $user = User::where('boutique_id', $boutiqueId)->find($id);
         if (!$user) throw new NotFoundException('Utilisateur introuvable', 'USER_NOT_FOUND');
 
+        if ($user->role !== 'CAISSIER') {
+            throw new DomainException("Seuls les comptes caissiers peuvent être modifiés depuis cet écran.", 403, 'FORBIDDEN');
+        }
+
         $data = $request->validate([
-            'email'      => 'sometimes|email',
-            'password'   => 'sometimes|string|min:8',
-            'role'       => 'sometimes|in:ADMIN,VENDEUR,GERANT',
-            'boutiqueId' => 'sometimes|nullable|uuid',
+            'email'    => 'sometimes|email',
+            'password' => 'sometimes|string|min:8',
         ]);
 
         $update = [];
-        if (isset($data['email']))      $update['email']         = $data['email'];
-        if (isset($data['role']))       $update['role']          = $data['role'];
-        if (isset($data['boutiqueId'])) $update['boutique_id']   = $data['boutiqueId'];
-        if (isset($data['password']))   $update['password_hash'] = Hash::make($data['password']);
+        if (isset($data['email']))    $update['email']         = $data['email'];
+        if (isset($data['password'])) $update['password_hash'] = Hash::make($data['password']);
 
         $user->update($update);
-        AuditLog::record($request->user()->id, 'USER_UPDATE', 'User', $user->id, "Modification utilisateur {$user->email}");
+        AuditLog::record($request->user()->id, 'USER_UPDATE', 'User', $user->id, "Modification caissier {$user->email}");
         return $this->success($user->fresh());
     }
 
-    /**
-     * @OA\Delete(
-     *     path="/users/{id}",
-     *     tags={"Utilisateurs"},
-     *     summary="Supprimer un utilisateur (ADMIN)",
-     *     security={{"bearerAuth":{}}},
-     *     @OA\Parameter(name="id", in="path", required=true, @OA\Schema(type="string", format="uuid")),
-     *     @OA\Response(response=200, description="Supprimé", @OA\JsonContent(ref="#/components/schemas/ApiResponse")),
-     *     @OA\Response(response=404, description="Introuvable", @OA\JsonContent(ref="#/components/schemas/ErrorResponse"))
-     * )
-     */
     public function destroy(Request $request, string $id): JsonResponse
     {
-        $user = User::find($id);
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $user = User::where('boutique_id', $boutiqueId)->find($id);
         if (!$user) throw new NotFoundException('Utilisateur introuvable', 'USER_NOT_FOUND');
+
+        if ($user->role !== 'CAISSIER') {
+            throw new DomainException("Seuls les comptes caissiers peuvent être supprimés depuis cet écran.", 403, 'FORBIDDEN');
+        }
+
         $user->delete();
-        AuditLog::record($request->user()->id, 'USER_DESTROY', 'User', $id, "Suppression utilisateur {$user->email}");
+        AuditLog::record($request->user()->id, 'USER_DESTROY', 'User', $id, "Suppression caissier {$user->email}");
         return $this->success($user);
     }
 }

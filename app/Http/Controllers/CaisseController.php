@@ -4,28 +4,18 @@ namespace App\Http\Controllers;
 
 use App\Exceptions\ConflictException;
 use App\Exceptions\NotFoundException;
-use App\Exceptions\ValidationException;
 use App\Http\Traits\ApiResponse;
 use App\Models\CaisseSession;
-use App\Models\Entree;
 use App\Models\Transaction;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class CaisseController extends Controller
 {
     use ApiResponse;
 
-    private function boutiqueId(Request $request, ?string $queryBoutiqueId = null): ?string
-    {
-        $user = $request->user();
-        return $user->role === 'ADMIN' ? $queryBoutiqueId : $user->boutique_id;
-    }
-
     /**
-     * @OA\Get(path="/caisse/sessions", tags={"Caisse"}, summary="Liste des sessions de caisse", security={{"bearerAuth":{}}},
-     *     @OA\Parameter(name="boutiqueId", in="query", @OA\Schema(type="string", format="uuid")),
+     * @OA\Get(path="/caisse/sessions", tags={"Caisse"}, summary="Liste des sessions de caisse de sa boutique", security={{"bearerAuth":{}}},
      *     @OA\Parameter(name="dateDebut", in="query", @OA\Schema(type="string", format="date")),
      *     @OA\Parameter(name="dateFin", in="query", @OA\Schema(type="string", format="date")),
      *     @OA\Response(response=200, description="Sessions", @OA\JsonContent(ref="#/components/schemas/ApiResponse"))
@@ -33,9 +23,8 @@ class CaisseController extends Controller
      */
     public function listSessions(Request $request): JsonResponse
     {
-        $boutiqueId = $this->boutiqueId($request, $request->query('boutiqueId'));
-        $q = CaisseSession::with(['user', 'boutique'])->orderBy('date_ouverture', 'desc');
-        if ($boutiqueId)                   $q->where('boutique_id', $boutiqueId);
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $q = CaisseSession::with(['user', 'boutique'])->where('boutique_id', $boutiqueId)->orderBy('date_ouverture', 'desc');
         if ($request->filled('dateDebut')) $q->where('date_ouverture', '>=', $request->dateDebut);
         if ($request->filled('dateFin'))   $q->where('date_ouverture', '<=', $request->dateFin);
 
@@ -49,10 +38,10 @@ class CaisseController extends Controller
 
     public function activeSession(Request $request): JsonResponse
     {
-        $boutiqueId = $this->boutiqueId($request, $request->query('boutiqueId'));
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $session = CaisseSession::with(['user', 'boutique'])
             ->where('statut', 'OUVERTE')
-            ->when($boutiqueId, fn($q) => $q->where('boutique_id', $boutiqueId))
+            ->where('boutique_id', $boutiqueId)
             ->orderBy('date_ouverture', 'desc')
             ->first();
 
@@ -72,12 +61,10 @@ class CaisseController extends Controller
             'montantOuverture' => 'sometimes|nullable|numeric|min:0',
         ]);
 
-        $boutiqueId = $this->boutiqueId($request, $request->query('boutiqueId'));
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $userId     = $request->user()->id;
 
-        $active = CaisseSession::where('statut', 'OUVERTE')
-            ->when($boutiqueId, fn($q) => $q->where('boutique_id', $boutiqueId))
-            ->first();
+        $active = CaisseSession::where('statut', 'OUVERTE')->where('boutique_id', $boutiqueId)->first();
 
         if ($active) {
             throw new ConflictException('Une session est déjà ouverte', 'SESSION_ALREADY_OPEN', ['sessionId' => $active->id]);
@@ -96,7 +83,8 @@ class CaisseController extends Controller
 
     public function closeSession(Request $request, string $id): JsonResponse
     {
-        $session = CaisseSession::with('transactions')->find($id);
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $session = CaisseSession::with('transactions')->where('boutique_id', $boutiqueId)->find($id);
         if (!$session) throw new NotFoundException('Session introuvable', 'SESSION_NOT_FOUND');
         if ($session->statut === 'FERMEE') {
             throw new ConflictException('La fermeture de caisse est irréversible', 'SESSION_CLOSED');
@@ -133,6 +121,11 @@ class CaisseController extends Controller
 
     public function listTransactions(Request $request, string $id): JsonResponse
     {
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        if (!CaisseSession::where('id', $id)->where('boutique_id', $boutiqueId)->exists()) {
+            throw new NotFoundException('Session introuvable', 'SESSION_NOT_FOUND');
+        }
+
         $q = Transaction::where('session_id', $id)->orderBy('created_at', 'desc');
 
         if ($request->filled('modePaiement')) $q->where('mode_paiement', $request->modePaiement);
@@ -172,11 +165,7 @@ class CaisseController extends Controller
             'notes'        => 'sometimes|nullable|string',
         ]);
 
-        $boutiqueId = $this->boutiqueId($request, $request->query('boutiqueId'));
-
-        if (!$boutiqueId && $request->user()->role === 'ADMIN') {
-            throw new ValidationException('boutiqueId requis pour un administrateur', 'BOUTIQUE_ID_REQUIRED');
-        }
+        $boutiqueId = $this->tenantBoutiqueId($request);
 
         $active = CaisseSession::where('statut', 'OUVERTE')
             ->where('boutique_id', $boutiqueId)
@@ -201,15 +190,13 @@ class CaisseController extends Controller
 
     public function resumeJour(Request $request): JsonResponse
     {
-        $boutiqueId = $this->boutiqueId($request, $request->query('boutiqueId'));
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $todayStart = now()->startOfDay();
 
         $txQuery = fn($q) => $q
             ->where('transactions.created_at', '>=', $todayStart)
-            ->when($boutiqueId, fn($q) => $q
-                ->join('caisse_sessions as cs', 'transactions.session_id', '=', 'cs.id')
-                ->where('cs.boutique_id', $boutiqueId)
-            );
+            ->join('caisse_sessions as cs', 'transactions.session_id', '=', 'cs.id')
+            ->where('cs.boutique_id', $boutiqueId);
 
         $totaux = Transaction::query()
             ->tap($txQuery)
@@ -226,13 +213,13 @@ class CaisseController extends Controller
 
         $totalAchats = (string) \Illuminate\Support\Facades\DB::table('entrees')
             ->where('created_at', '>=', $todayStart)
-            ->when($boutiqueId, fn($q) => $q->where('boutique_id', $boutiqueId))
+            ->where('boutique_id', $boutiqueId)
             ->sum('total_cout');
 
         $totalDepenses = (string) \Illuminate\Support\Facades\DB::table('sorties')
             ->where('type', 'DEPENSE')
             ->where('created_at', '>=', $todayStart)
-            ->when($boutiqueId, fn($q) => $q->where('boutique_id', $boutiqueId))
+            ->where('boutique_id', $boutiqueId)
             ->sum('total_montant');
 
         $totalVentes   = number_format((float) $totaux->totalVentes, 2, '.', '');
@@ -240,7 +227,7 @@ class CaisseController extends Controller
         $totalDepenses = number_format((float) $totalDepenses, 2, '.', '');
 
         $session = CaisseSession::where('statut', 'OUVERTE')
-            ->when($boutiqueId, fn($q) => $q->where('boutique_id', $boutiqueId))
+            ->where('boutique_id', $boutiqueId)
             ->orderBy('date_ouverture', 'desc')
             ->first();
 

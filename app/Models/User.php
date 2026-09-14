@@ -39,6 +39,10 @@ class User extends Authenticatable implements JWTSubject
         ];
     }
 
+    public function isSuperAdmin(): bool { return $this->role === 'SUPER_ADMIN'; }
+    public function isAdmin(): bool { return $this->role === 'ADMIN'; }
+    public function isCaissier(): bool { return $this->role === 'CAISSIER'; }
+
     public function boutique(): BelongsTo { return $this->belongsTo(Boutique::class); }
     public function entrees(): HasMany { return $this->hasMany(Entree::class); }
     public function sorties(): HasMany { return $this->hasMany(Sortie::class); }

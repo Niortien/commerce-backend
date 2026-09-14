@@ -9,13 +9,16 @@ class VarianteFactory extends Factory
 {
     public function definition(): array
     {
+        // La variante hérite obligatoirement de la boutique de son produit.
+        $produit = Produit::factory()->create();
+
         return [
-            'produit_id'      => Produit::factory(),
-            'boutique_id'     => null,
-            'taille'          => fake()->randomElement(['XS', 'S', 'M', 'L', 'XL', 'XXL']),
-            'couleur'         => fake()->safeColorName(),
-            'quantite_stock'  => fake()->numberBetween(0, 100),
-            'seuil_alerte'    => 5,
+            'produit_id'     => $produit->id,
+            'boutique_id'    => $produit->boutique_id,
+            'taille'         => fake()->randomElement(['XS', 'S', 'M', 'L', 'XL', 'XXL']),
+            'couleur'        => fake()->safeColorName(),
+            'quantite_stock' => fake()->numberBetween(0, 100),
+            'seuil_alerte'   => 5,
         ];
     }
 

@@ -2,34 +2,47 @@
 
 namespace Database\Seeders;
 
+use App\Models\Boutique;
 use App\Models\Categorie;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
 
 class DatabaseSeeder extends Seeder
 {
+    private ?string $demoBoutiqueId = null;
+
     public function run(): void
     {
         $this->seedUsers();
         $this->seedCategories();
     }
 
+    /**
+     * Données de démo pour le développement local : une boutique-locataire
+     * avec un ADMIN et un CAISSIER. En production, les vraies boutiques
+     * naissent via l'inscription (auth/inscription-boutique) ou via le
+     * Super Admin (voir SuperAdminSeeder pour le premier compte plateforme).
+     */
     private function seedUsers(): void
     {
+        $boutique = Boutique::firstOrCreate(
+            ['slug' => 'boutique-demo'],
+            ['nom' => 'Boutique Demo', 'is_active' => true, 'statut' => 'ACTIF']
+        );
+        $this->demoBoutiqueId = $boutique->id;
+
         $users = [
-            ['email' => 'admin@shop.com',   'password' => 'StrongPass123!', 'role' => 'ADMIN'],
-            ['email' => 'vendeur@shop.com', 'password' => 'StrongPass123!', 'role' => 'VENDEUR'],
+            ['email' => 'admin@shop.com',    'password' => 'StrongPass123!', 'role' => 'ADMIN'],
+            ['email' => 'caissier@shop.com', 'password' => 'StrongPass123!', 'role' => 'CAISSIER'],
         ];
 
         foreach ($users as $u) {
             User::firstOrCreate(
                 ['email' => $u['email']],
-                ['password_hash' => Hash::make($u['password']), 'role' => $u['role']]
+                ['password_hash' => Hash::make($u['password']), 'role' => $u['role'], 'boutique_id' => $boutique->id]
             );
         }
-        
     }
 
     private function seedCategories(): void
@@ -88,7 +101,7 @@ class DatabaseSeeder extends Seeder
 
         foreach ($catDefs as $cat) {
             Categorie::firstOrCreate(
-                ['slug' => $cat['slug']],
+                ['boutique_id' => $this->demoBoutiqueId, 'slug' => $cat['slug']],
                 ['nom' => $cat['nom'], 'description' => $cat['description']]
             );
         }

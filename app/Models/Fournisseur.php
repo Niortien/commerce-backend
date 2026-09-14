@@ -14,7 +14,7 @@ class Fournisseur extends Model
     protected $keyType = 'string';
     public $incrementing = false;
 
-    protected $fillable = ['nom', 'telephone', 'adresse', 'notes'];
+    protected $fillable = ['boutique_id', 'nom', 'telephone', 'adresse', 'notes'];
 
     protected static function boot(): void
     {
@@ -22,5 +22,6 @@ class Fournisseur extends Model
         static::creating(fn($m) => $m->id = (string) Str::uuid());
     }
 
+    public function boutique(): \Illuminate\Database\Eloquent\Relations\BelongsTo { return $this->belongsTo(Boutique::class); }
     public function entrees(): HasMany { return $this->hasMany(Entree::class); }
 }

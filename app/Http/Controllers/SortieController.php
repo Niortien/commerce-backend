@@ -7,6 +7,7 @@ use App\Exceptions\NotFoundException;
 use App\Http\Traits\ApiResponse;
 use App\Models\CaisseSession;
 use App\Models\Sortie;
+use App\Models\Variante;
 use App\Services\StockMovementService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,15 +20,16 @@ class SortieController extends Controller
 
     public function __construct(private StockMovementService $movements) {}
 
-    private function boutiqueId(Request $request): ?string
+    private function findOwned(Request $request, string $id): Sortie
     {
-        $user = $request->user();
-        return $user->role === 'ADMIN' ? ($request->query('boutiqueId') ?? null) : $user->boutique_id;
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $sortie = Sortie::where('boutique_id', $boutiqueId)->find($id);
+        if (!$sortie) throw new NotFoundException('Sortie introuvable', 'SORTIE_NOT_FOUND');
+        return $sortie;
     }
 
     /**
-     * @OA\Get(path="/sorties", tags={"Sorties"}, summary="Liste des sorties (paginée)", security={{"bearerAuth":{}}},
-     *     @OA\Parameter(name="boutiqueId", in="query", @OA\Schema(type="string", format="uuid")),
+     * @OA\Get(path="/sorties", tags={"Sorties"}, summary="Liste des sorties de sa boutique (paginée)", security={{"bearerAuth":{}}},
      *     @OA\Parameter(name="type", in="query", @OA\Schema(type="string", enum={"VENTE","PERTE","DON","RETOUR_FOURNISSEUR","DEPENSE"})),
      *     @OA\Parameter(name="dateDebut", in="query", @OA\Schema(type="string", format="date")),
      *     @OA\Parameter(name="dateFin", in="query", @OA\Schema(type="string", format="date")),
@@ -36,10 +38,9 @@ class SortieController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $boutiqueId = $this->boutiqueId($request);
-        $q = Sortie::with(['user', 'boutique', 'lignes.variante.produit', 'transaction'])->orderBy('created_at', 'desc');
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $q = Sortie::with(['user', 'boutique', 'lignes.variante.produit', 'transaction'])->where('boutique_id', $boutiqueId)->orderBy('created_at', 'desc');
 
-        if ($boutiqueId)             $q->where('boutique_id', $boutiqueId);
         if ($request->filled('type'))      $q->where('type', $request->type);
         if ($request->filled('dateDebut')) $q->where('created_at', '>=', $request->dateDebut);
         if ($request->filled('dateFin'))   $q->where('created_at', '<=', $request->dateFin);
@@ -52,11 +53,10 @@ class SortieController extends Controller
         return $this->paginated($data, $total, $page, $limit);
     }
 
-    public function show(string $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
-        $s = Sortie::with(['user', 'boutique', 'lignes.variante.produit', 'transaction'])->find($id);
-        if (!$s) throw new NotFoundException('Sortie introuvable', 'SORTIE_NOT_FOUND');
-        return $this->success($s);
+        $sortie = $this->findOwned($request, $id);
+        return $this->success($sortie->load(['user', 'boutique', 'lignes.variante.produit', 'transaction']));
     }
 
     /**
@@ -92,7 +92,7 @@ class SortieController extends Controller
             'lignes.*.prixUnitaire'  => 'required|numeric|min:0',
         ]);
 
-        $boutiqueId = $this->boutiqueId($request);
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $userId     = $request->user()->id;
 
         if ($data['type'] === 'DEPENSE') {
@@ -110,10 +110,14 @@ class SortieController extends Controller
             return $this->success($sortie->load(['user', 'boutique']), 201);
         }
 
+        foreach ($data['lignes'] ?? [] as $l) {
+            if (!Variante::where('id', $l['varianteId'])->where('boutique_id', $boutiqueId)->exists()) {
+                throw new NotFoundException('Variante introuvable', 'VARIANTE_NOT_FOUND');
+            }
+        }
+
         if ($data['type'] === 'VENTE') {
-            $session = CaisseSession::where('statut', 'OUVERTE')
-                ->when($boutiqueId, fn($q) => $q->where('boutique_id', $boutiqueId))
-                ->first();
+            $session = CaisseSession::where('statut', 'OUVERTE')->where('boutique_id', $boutiqueId)->first();
             if (!$session) {
                 throw new ConflictException('Aucune session de caisse ouverte', 'NO_ACTIVE_SESSION');
             }
@@ -161,20 +165,18 @@ class SortieController extends Controller
 
     public function update(Request $request, string $id): JsonResponse
     {
-        $sortie = Sortie::find($id);
-        if (!$sortie) throw new NotFoundException('Sortie introuvable', 'SORTIE_NOT_FOUND');
+        $sortie = $this->findOwned($request, $id);
 
         $data = $request->validate(['notes' => 'sometimes|nullable|string']);
         $sortie->update($data);
         return $this->success($sortie->fresh()->load(['lignes.variante.produit', 'user', 'boutique', 'transaction']));
     }
 
-    public function destroy(string $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
-        $sortie = Sortie::with('lignes')->find($id);
-        if (!$sortie) throw new NotFoundException('Sortie introuvable', 'SORTIE_NOT_FOUND');
+        $sortie = $this->findOwned($request, $id)->load('lignes');
 
-        $userId = request()->user()->id;
+        $userId = $request->user()->id;
         DB::transaction(function () use ($sortie, $userId) {
             foreach ($sortie->lignes as $ligne) {
                 $this->movements->create($ligne->variante_id, 'RETOUR', $ligne->quantite, $userId, 'Annulation sortie ' . $sortie->reference);
@@ -187,16 +189,15 @@ class SortieController extends Controller
         return $this->success($sortie);
     }
 
-    public function annuler(string $id): JsonResponse
+    public function annuler(Request $request, string $id): JsonResponse
     {
-        $sortie = Sortie::with('lignes')->find($id);
-        if (!$sortie) throw new NotFoundException('Sortie introuvable', 'SORTIE_NOT_FOUND');
+        $sortie = $this->findOwned($request, $id)->load('lignes');
 
         if (str_starts_with($sortie->notes ?? '', '[ANNULÉE]')) {
             throw new ConflictException('Sortie déjà annulée', 'SORTIE_ALREADY_CANCELLED');
         }
 
-        $userId = request()->user()->id;
+        $userId = $request->user()->id;
         DB::transaction(function () use ($sortie, $userId) {
             foreach ($sortie->lignes as $ligne) {
                 $this->movements->create($ligne->variante_id, 'RETOUR', $ligne->quantite, $userId, 'Annulation sortie ' . $sortie->reference);

@@ -13,8 +13,13 @@ class Boutique extends Model
     protected $keyType = 'string';
     public $incrementing = false;
 
-    protected $fillable = ['nom', 'adresse', 'ville', 'whatsapp', 'is_active'];
+    protected $fillable = [
+        'nom', 'slug', 'adresse', 'ville', 'whatsapp', 'email', 'telephone',
+        'logo_url', 'is_active', 'statut',
+    ];
     protected $casts = ['is_active' => 'boolean'];
+
+    public const STATUTS_ACTIFS = ['ESSAI', 'ACTIF'];
 
     protected static function boot(): void
     {
@@ -54,4 +59,41 @@ class Boutique extends Model
     public function entrees(): HasMany { return $this->hasMany(Entree::class); }
     public function sorties(): HasMany { return $this->hasMany(Sortie::class); }
     public function caisseSessions(): HasMany { return $this->hasMany(CaisseSession::class); }
+    public function categories(): HasMany { return $this->hasMany(Categorie::class); }
+    public function produits(): HasMany { return $this->hasMany(Produit::class); }
+    public function fournisseurs(): HasMany { return $this->hasMany(Fournisseur::class); }
+    public function abonnements(): HasMany { return $this->hasMany(Abonnement::class); }
+
+    public function abonnementActif(): ?Abonnement
+    {
+        return $this->abonnements()
+            ->where('statut', 'ACTIF')
+            ->orderByDesc('date_fin')
+            ->first();
+    }
+
+    /**
+     * Recalcule le statut de la boutique en fonction de son abonnement en
+     * cours (auto-expiration) et garde is_active synchronisé. À appeler à
+     * la connexion et sur les requêtes protégées (voir EnsureBoutiqueActive).
+     */
+    public function synchroniserStatutAbonnement(): void
+    {
+        if (in_array($this->statut, ['SUSPENDU', 'ARCHIVE', 'EN_ATTENTE'], true)) {
+            return; // décisions manuelles du Super Admin, on ne les écrase pas
+        }
+
+        $abonnement = $this->abonnementActif();
+        $expire = !$abonnement || $abonnement->date_fin->isPast();
+
+        if ($expire && $this->statut !== 'SUSPENDU') {
+            $this->update(['statut' => 'SUSPENDU', 'is_active' => false]);
+        }
+    }
+
+    public function accesAutorise(): bool
+    {
+        $this->synchroniserStatutAbonnement();
+        return in_array($this->statut, self::STATUTS_ACTIFS, true);
+    }
 }

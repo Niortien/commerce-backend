@@ -4,14 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Exceptions\NotFoundException;
 use App\Http\Traits\ApiResponse;
-use App\Models\Boutique;
-use App\Models\Categorie;
 use App\Models\Entree;
 use App\Models\Fournisseur;
-
 use App\Models\Produit;
 use App\Models\Variante;
-
 use App\Services\StockMovementService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -24,15 +20,16 @@ class EntreeController extends Controller
 
     public function __construct(private StockMovementService $movements) {}
 
-    private function boutiqueId(Request $request): ?string
+    private function findOwned(Request $request, string $id): Entree
     {
-        $user = $request->user();
-        return $user->role === 'ADMIN' ? ($request->query('boutiqueId') ?? null) : $user->boutique_id;
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $entree = Entree::where('boutique_id', $boutiqueId)->find($id);
+        if (!$entree) throw new NotFoundException('Entrée introuvable', 'ENTREE_NOT_FOUND');
+        return $entree;
     }
 
     /**
-     * @OA\Get(path="/entrees", tags={"Entrées"}, summary="Liste des entrées de stock (paginée)", security={{"bearerAuth":{}}},
-     *     @OA\Parameter(name="boutiqueId", in="query", @OA\Schema(type="string", format="uuid")),
+     * @OA\Get(path="/entrees", tags={"Entrées"}, summary="Liste des entrées de stock de sa boutique (paginée)", security={{"bearerAuth":{}}},
      *     @OA\Parameter(name="fournisseur", in="query", @OA\Schema(type="string")),
      *     @OA\Parameter(name="dateDebut", in="query", @OA\Schema(type="string", format="date")),
      *     @OA\Parameter(name="dateFin", in="query", @OA\Schema(type="string", format="date")),
@@ -43,14 +40,13 @@ class EntreeController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $boutiqueId = $this->boutiqueId($request);
-        $q = Entree::with(['user', 'boutique', 'lignes.variante.produit'])->orderBy('created_at', 'desc');
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $q = Entree::with(['user', 'boutique', 'lignes.variante.produit'])->where('boutique_id', $boutiqueId)->orderBy('created_at', 'desc');
 
-        if ($boutiqueId)                  $q->where('boutique_id', $boutiqueId);
-        if ($request->filled('fournisseur')) $q->where('fournisseur', 'like', '%'.$request->fournisseur.'%');
+        if ($request->filled('fournisseur'))   $q->where('fournisseur', 'like', '%'.$request->fournisseur.'%');
         if ($request->filled('fournisseurId')) $q->where('fournisseur_id', $request->fournisseurId);
-        if ($request->filled('dateDebut'))   $q->where('created_at', '>=', $request->dateDebut);
-        if ($request->filled('dateFin'))     $q->where('created_at', '<=', $request->dateFin);
+        if ($request->filled('dateDebut'))     $q->where('created_at', '>=', $request->dateDebut);
+        if ($request->filled('dateFin'))       $q->where('created_at', '<=', $request->dateFin);
 
         $page  = max(1, (int) $request->get('page', 1));
         $limit = min(100, max(1, (int) $request->get('limit', 20)));
@@ -60,11 +56,10 @@ class EntreeController extends Controller
         return $this->paginated($data, $total, $page, $limit);
     }
 
-    public function show(string $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
-        $e = Entree::with(['user', 'boutique', 'lignes.variante.produit'])->find($id);
-        if (!$e) throw new NotFoundException('Entrée introuvable', 'ENTREE_NOT_FOUND');
-        return $this->success($e);
+        $entree = $this->findOwned($request, $id);
+        return $this->success($entree->load(['user', 'boutique', 'lignes.variante.produit']));
     }
 
     /**
@@ -96,14 +91,14 @@ class EntreeController extends Controller
             'lignes.*.newProduit'       => 'sometimes|nullable|array',
         ]);
 
-        $boutiqueId = $this->boutiqueId($request);
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $userId     = $request->user()->id;
         $reference  = 'ENT-' . strtoupper(Str::random(8));
         $totalCout  = '0.00';
 
         $fournisseurNom = trim($data['fournisseur']);
         $fournisseur = Fournisseur::firstOrCreate(
-            ['nom' => $fournisseurNom],
+            ['boutique_id' => $boutiqueId, 'nom' => $fournisseurNom],
             ['nom' => $fournisseurNom]
         );
 
@@ -121,9 +116,17 @@ class EntreeController extends Controller
             foreach ($data['lignes'] as $ligne) {
                 $varianteId = $ligne['varianteId'] ?? null;
 
+                if ($varianteId && !Variante::where('id', $varianteId)->where('boutique_id', $boutiqueId)->exists()) {
+                    throw new NotFoundException('Variante introuvable', 'VARIANTE_NOT_FOUND');
+                }
+
                 if (!$varianteId && !empty($ligne['newProduit'])) {
                     $np = $ligne['newProduit'];
+                    if (!\App\Models\Categorie::where('id', $np['categorieId'])->where('boutique_id', $boutiqueId)->exists()) {
+                        throw new NotFoundException('Categorie introuvable', 'CATEGORIE_NOT_FOUND');
+                    }
                     $produit = Produit::create([
+                        'boutique_id'  => $boutiqueId,
                         'nom'          => $np['nom'],
                         'sku'          => Str::slug($np['nom']) . '-' . base_convert((string) time(), 10, 36),
                         'categorie_id' => $np['categorieId'],
@@ -161,8 +164,7 @@ class EntreeController extends Controller
 
     public function update(Request $request, string $id): JsonResponse
     {
-        $entree = Entree::find($id);
-        if (!$entree) throw new NotFoundException('Entrée introuvable', 'ENTREE_NOT_FOUND');
+        $entree = $this->findOwned($request, $id);
 
         $data = $request->validate([
             'fournisseur' => 'sometimes|string',
@@ -173,12 +175,11 @@ class EntreeController extends Controller
         return $this->success($entree->fresh()->load(['lignes.variante.produit', 'user', 'boutique']));
     }
 
-    public function destroy(string $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
-        $entree = Entree::with('lignes')->find($id);
-        if (!$entree) throw new NotFoundException('Entrée introuvable', 'ENTREE_NOT_FOUND');
+        $entree = $this->findOwned($request, $id)->load('lignes');
 
-        $userId = request()->user()->id;
+        $userId = $request->user()->id;
         DB::transaction(function () use ($entree, $userId) {
             foreach ($entree->lignes as $ligne) {
                 $this->movements->create($ligne->variante_id, 'SORTIE', $ligne->quantite, $userId, 'Annulation entrée ' . $entree->reference);
@@ -198,16 +199,15 @@ class EntreeController extends Controller
      *     @OA\Response(response=409, description="Déjà annulée", @OA\JsonContent(ref="#/components/schemas/ErrorResponse"))
      * )
      */
-    public function annuler(string $id): JsonResponse
+    public function annuler(Request $request, string $id): JsonResponse
     {
-        $entree = Entree::with('lignes')->find($id);
-        if (!$entree) throw new NotFoundException('Entrée introuvable', 'ENTREE_NOT_FOUND');
+        $entree = $this->findOwned($request, $id)->load('lignes');
 
         if (str_starts_with($entree->fournisseur, '[ANNULÉE]')) {
             throw new \App\Exceptions\ConflictException('Entrée déjà annulée', 'ENTREE_ALREADY_CANCELLED');
         }
 
-        $userId = request()->user()->id;
+        $userId = $request->user()->id;
         DB::transaction(function () use ($entree, $userId) {
             foreach ($entree->lignes as $ligne) {
                 $this->movements->create($ligne->variante_id, 'SORTIE', $ligne->quantite, $userId, 'Annulation entrée ' . $entree->reference);

@@ -23,12 +23,6 @@ class RapportController extends Controller
 {
     use ApiResponse;
 
-    private function boutiqueId(Request $request): ?string
-    {
-        $user = $request->user();
-        return $user->role === 'ADMIN' ? ($request->query('boutiqueId') ?? null) : $user->boutique_id;
-    }
-
     /**
      * @OA\Get(path="/rapports/ventes", tags={"Rapports"}, summary="Ventes groupées par période", security={{"bearerAuth":{}}},
      *     @OA\Parameter(name="groupBy", in="query", @OA\Schema(type="string", enum={"jour","semaine","mois"}, default="jour")),
@@ -40,7 +34,7 @@ class RapportController extends Controller
      */
     public function ventes(Request $request): JsonResponse
     {
-        $boutiqueId = $this->boutiqueId($request);
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $groupBy    = $request->get('groupBy', 'jour');
         $dateDebut  = $request->get('dateDebut', now()->subDays(30)->toDateString());
         $dateFin    = $request->get('dateFin', now()->toDateString());
@@ -77,7 +71,7 @@ class RapportController extends Controller
 
     public function stockValeur(Request $request): JsonResponse
     {
-        $boutiqueId = $this->boutiqueId($request);
+        $boutiqueId = $this->tenantBoutiqueId($request);
 
         $data = Cache::remember("stock-valeur:{$boutiqueId}", 300, function () use ($boutiqueId) {
             $row = \Illuminate\Support\Facades\DB::table('variantes as v')
@@ -109,7 +103,7 @@ class RapportController extends Controller
 
     public function topProduits(Request $request): JsonResponse
     {
-        $boutiqueId = $this->boutiqueId($request);
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $dateDebut  = $request->get('dateDebut', now()->subDays(30)->toDateString());
         $dateFin    = $request->get('dateFin', now()->toDateString());
 
@@ -151,7 +145,7 @@ class RapportController extends Controller
      */
     public function depenses(Request $request): JsonResponse
     {
-        $boutiqueId = $this->boutiqueId($request);
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $dateDebut  = $request->get('dateDebut', now()->subDays(30)->toDateString());
         $dateFin    = $request->get('dateFin', now()->toDateString());
 
@@ -180,7 +174,7 @@ class RapportController extends Controller
      */
     public function recetteHebdomadaire(Request $request): JsonResponse
     {
-        $boutiqueId = $this->boutiqueId($request);
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $dateDebut  = $request->get('dateDebut', now()->subWeeks(11)->startOfWeek()->toDateString());
         $dateFin    = $request->get('dateFin', now()->toDateString());
 
@@ -225,7 +219,7 @@ class RapportController extends Controller
 
     public function fluxTresorerie(Request $request): JsonResponse
     {
-        $boutiqueId = $this->boutiqueId($request);
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $groupBy    = $request->get('groupBy', 'jour');
         $dateDebut  = $request->get('dateDebut', now()->subDays(30)->toDateString());
         $dateFin    = $request->get('dateFin', now()->toDateString());
@@ -285,7 +279,7 @@ class RapportController extends Controller
      */
     public function resumeDashboard(Request $request): JsonResponse
     {
-        $boutiqueId = $this->boutiqueId($request);
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $dateDebut  = $request->get('dateDebut', now()->subDays(6)->toDateString());
         $dateFin    = $request->get('dateFin', now()->toDateString());
 
@@ -397,7 +391,7 @@ class RapportController extends Controller
      */
     public function exportExcel(Request $request): mixed
     {
-        $boutiqueId = $this->boutiqueId($request);
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $dateDebut  = $request->get('dateDebut', now()->subDays(30)->toDateString());
         $dateFin    = $request->get('dateFin', now()->toDateString());
 
@@ -432,7 +426,7 @@ class RapportController extends Controller
      */
     public function exportPdf(Request $request): Response
     {
-        $boutiqueId = $this->boutiqueId($request);
+        $boutiqueId = $this->tenantBoutiqueId($request);
         $dateDebut  = $request->get('dateDebut', now()->subDays(30)->toDateString());
         $dateFin    = $request->get('dateFin', now()->toDateString());
 

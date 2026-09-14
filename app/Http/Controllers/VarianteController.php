@@ -16,36 +16,41 @@ class VarianteController extends Controller
 
     public function __construct(private StockMovementService $movements) {}
 
+    private function findOwned(Request $request, string $id): Variante
+    {
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $variante = Variante::where('boutique_id', $boutiqueId)->find($id);
+        if (!$variante) throw new NotFoundException('Variante introuvable', 'VARIANTE_NOT_FOUND');
+        return $variante;
+    }
+
     public function update(Request $request, string $id): JsonResponse
     {
-        $variante = Variante::find($id);
-        if (!$variante) throw new NotFoundException('Variante introuvable', 'VARIANTE_NOT_FOUND');
+        $variante = $this->findOwned($request, $id);
 
         $data = $request->validate([
-            'taille'       => 'sometimes|string',
-            'couleur'      => 'sometimes|string',
-            'seuilAlerte'  => 'sometimes|integer|min:0',
-            'boutiqueId'   => 'sometimes|nullable|uuid|exists:boutiques,id',
+            'taille'      => 'sometimes|string',
+            'couleur'     => 'sometimes|string',
+            'seuilAlerte' => 'sometimes|integer|min:0',
         ]);
 
-        $map = ['taille' => 'taille', 'couleur' => 'couleur', 'seuilAlerte' => 'seuil_alerte', 'boutiqueId' => 'boutique_id'];
+        $map = ['taille' => 'taille', 'couleur' => 'couleur', 'seuilAlerte' => 'seuil_alerte'];
         $update = [];
         foreach ($map as $from => $to) {
             if (array_key_exists($from, $data)) $update[$to] = $data[$from];
         }
 
-        if (array_key_exists('boutique_id', $update) && $update['boutique_id'] !== $variante->boutique_id) {
+        if ((isset($update['taille']) || isset($update['couleur']))) {
             $conflit = Variante::where('produit_id', $variante->produit_id)
                 ->where('taille', $update['taille'] ?? $variante->taille)
                 ->where('couleur', $update['couleur'] ?? $variante->couleur)
-                ->where('boutique_id', $update['boutique_id'])
                 ->where('id', '!=', $variante->id)
                 ->exists();
 
             if ($conflit) {
                 throw new ConflictException(
-                    'Une variante identique (taille/couleur) existe déjà dans cette boutique',
-                    'VARIANTE_BOUTIQUE_CONFLICT'
+                    'Une variante identique (taille/couleur) existe déjà pour ce produit',
+                    'VARIANTE_CONFLICT'
                 );
             }
         }
@@ -54,10 +59,9 @@ class VarianteController extends Controller
         return $this->success($variante->fresh()->load('produit'));
     }
 
-    public function destroy(string $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
-        $variante = Variante::find($id);
-        if (!$variante) throw new NotFoundException('Variante introuvable', 'VARIANTE_NOT_FOUND');
+        $variante = $this->findOwned($request, $id);
 
         if ($variante->mouvements()->exists()) {
             throw new ConflictException(
@@ -72,8 +76,7 @@ class VarianteController extends Controller
 
     public function adjustStock(Request $request, string $id): JsonResponse
     {
-        $variante = Variante::find($id);
-        if (!$variante) throw new NotFoundException('Variante introuvable', 'VARIANTE_NOT_FOUND');
+        $variante = $this->findOwned($request, $id);
 
         $data = $request->validate([
             'variation' => 'required|integer',
@@ -85,7 +88,7 @@ class VarianteController extends Controller
         $quantite  = abs($variation);
 
         $mouvement = $this->movements->create(
-            $id, $type, $quantite, $request->user()->id, $data['motif'] ?? null
+            $variante->id, $type, $quantite, $request->user()->id, $data['motif'] ?? null
         );
 
         return $this->success($mouvement->load('variante'));

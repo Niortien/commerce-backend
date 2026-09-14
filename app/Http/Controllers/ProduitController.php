@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\DomainException;
 use App\Exceptions\NotFoundException;
 use App\Http\Traits\ApiResponse;
 use App\Models\Categorie;
@@ -22,21 +23,43 @@ class ProduitController extends Controller
     public function __construct(private CloudinaryService $cloudinary) {}
 
     /**
-     * @OA\Get(path="/categories", tags={"Produits"}, summary="Liste toutes les catégories",
+     * Résout la boutique dont on affiche le catalogue public : le paramètre
+     * boutiqueId (ou boutiqueSlug) explicite, sinon la boutique de
+     * l'utilisateur connecté (vue "mon catalogue" côté ADMIN/CAISSIER).
+     * Chaque boutique ayant désormais son propre catalogue isolé, aucune
+     * valeur ne veut dire "aucun résultat" plutôt que "tout mélanger".
+     */
+    private function resolveBoutiqueId(Request $request): ?string
+    {
+        if ($request->filled('boutiqueSlug')) {
+            return \App\Models\Boutique::where('slug', $request->boutiqueSlug)->value('id');
+        }
+        if ($request->filled('boutiqueId')) {
+            return $request->boutiqueId;
+        }
+        return $request->user()?->boutique_id;
+    }
+
+    /**
+     * @OA\Get(path="/categories", tags={"Produits"}, summary="Liste les catégories du catalogue d'une boutique",
+     *     @OA\Parameter(name="boutiqueId", in="query", @OA\Schema(type="string", format="uuid")),
      *     @OA\Response(response=200, description="Catégories",
      *         @OA\JsonContent(@OA\Property(property="data", type="array", @OA\Items(ref="#/components/schemas/Categorie")),
      *             @OA\Property(property="meta", type="object", nullable=true), @OA\Property(property="timestamp", type="string", format="date-time"))
      *     )
      * )
      */
-    public function categories(): JsonResponse
+    public function categories(Request $request): JsonResponse
     {
-        $data = Cache::remember('categories.all', 3600, fn () => Categorie::orderBy('nom')->get());
+        $boutiqueId = $this->resolveBoutiqueId($request);
+        if (!$boutiqueId) return $this->success([]);
+
+        $data = Cache::remember("categories.{$boutiqueId}", 3600, fn () => Categorie::where('boutique_id', $boutiqueId)->orderBy('nom')->get());
         return $this->success($data);
     }
 
     /**
-     * @OA\Get(path="/produits", tags={"Produits"}, summary="Liste des produits (paginée)",
+     * @OA\Get(path="/produits", tags={"Produits"}, summary="Liste des produits d'une boutique (paginée)",
      *     @OA\Parameter(name="page", in="query", @OA\Schema(type="integer", default=1)),
      *     @OA\Parameter(name="limit", in="query", @OA\Schema(type="integer", default=20)),
      *     @OA\Parameter(name="search", in="query", @OA\Schema(type="string")),
@@ -47,14 +70,14 @@ class ProduitController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $q = Produit::with(['categorie', 'variantes', 'images'])->where('is_actif', true);
+        $boutiqueId = $this->resolveBoutiqueId($request);
+        if (!$boutiqueId) return $this->paginated([], 0, 1, (int) $request->get('limit', 20));
+
+        $q = Produit::with(['categorie', 'variantes', 'images'])->where('boutique_id', $boutiqueId)->where('is_actif', true);
 
         if ($request->filled('categorieId')) $q->where('categorie_id', $request->categorieId);
         if ($request->filled('search'))       $q->where('nom', 'like', '%' . $request->search . '%');
         if ($request->filled('enPromo'))      $q->where('en_promo', filter_var($request->enPromo, FILTER_VALIDATE_BOOLEAN));
-        if ($request->filled('boutiqueId')) {
-            $q->whereHas('variantes', fn($v) => $v->where('boutique_id', $request->boutiqueId));
-        }
 
         $page  = max(1, (int) $request->get('page', 1));
         $limit = min(200, max(1, (int) $request->get('limit', 20)));
@@ -79,7 +102,19 @@ class ProduitController extends Controller
     }
 
     /**
-     * @OA\Post(path="/produits", tags={"Produits"}, summary="Créer un produit", security={{"bearerAuth":{}}},
+     * Charge un produit ET vérifie qu'il appartient bien à la boutique de
+     * l'utilisateur courant (isolation stricte entre tenants).
+     */
+    private function findOwnedProduit(Request $request, string $id): Produit
+    {
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $produit = Produit::where('boutique_id', $boutiqueId)->find($id);
+        if (!$produit) throw new NotFoundException('Produit introuvable', 'PRODUIT_NOT_FOUND');
+        return $produit;
+    }
+
+    /**
+     * @OA\Post(path="/produits", tags={"Produits"}, summary="Créer un produit dans le catalogue de sa boutique", security={{"bearerAuth":{}}},
      *     @OA\RequestBody(required=true,
      *         @OA\JsonContent(required={"nom","categorieId","prixVente","prixAchat"},
      *             @OA\Property(property="nom", type="string"),
@@ -100,11 +135,13 @@ class ProduitController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        $boutiqueId = $this->tenantBoutiqueId($request);
+
         $data = $request->validate([
             'nom'         => 'required|string',
-            'sku'         => 'sometimes|nullable|string|unique:produits,sku',
+            'sku'         => 'sometimes|nullable|string',
             'description' => 'sometimes|nullable|string',
-            'categorieId' => 'required|uuid|exists:categories,id',
+            'categorieId' => 'required|uuid',
             'prixVente'   => 'required|numeric|min:0',
             'prixAchat'   => 'required|numeric|min:0',
             'imageUrl'    => 'sometimes|nullable|string',
@@ -115,20 +152,26 @@ class ProduitController extends Controller
             'variantes.*.seuilAlerte'    => 'sometimes|integer|min:0',
         ]);
 
-        $imageUrl = null;
-        if (!empty($data['imageUrl']) && str_starts_with($data['imageUrl'], 'data:')) {
+        $categorie = Categorie::where('boutique_id', $boutiqueId)->find($data['categorieId']);
+        if (!$categorie) throw new NotFoundException('Categorie introuvable', 'CATEGORIE_NOT_FOUND');
+
+        if (!empty($data['sku']) && Produit::where('boutique_id', $boutiqueId)->where('sku', $data['sku'])->exists()) {
+            throw new \App\Exceptions\ConflictException('Ce SKU est déjà utilisé dans votre boutique', 'PRODUIT_SKU_TAKEN');
+        }
+
+        $imageUrl = $data['imageUrl'] ?? null;
+        if ($imageUrl && str_starts_with($imageUrl, 'data:')) {
             try {
-                $imageUrl = $this->cloudinary->uploadBase64($data['imageUrl']);
+                $imageUrl = $this->cloudinary->uploadBase64($imageUrl);
             } catch (\RuntimeException $e) {
-                throw new \App\Exceptions\DomainException('IMAGE_UPLOAD_FAILED: ' . $e->getMessage(), 422, 'IMAGE_UPLOAD_FAILED');
+                throw new DomainException('IMAGE_UPLOAD_FAILED: ' . $e->getMessage(), 422, 'IMAGE_UPLOAD_FAILED');
             }
-        } elseif (!empty($data['imageUrl'])) {
-            $imageUrl = $data['imageUrl'];
         }
 
         $sku = $data['sku'] ?? (Str::slug($data['nom']) . '-' . base_convert((string) time(), 10, 36));
 
         $produit = Produit::create([
+            'boutique_id'  => $boutiqueId,
             'nom'          => $data['nom'],
             'sku'          => $sku,
             'description'  => $data['description'] ?? null,
@@ -138,36 +181,23 @@ class ProduitController extends Controller
             'image_url'    => $imageUrl,
         ]);
 
-        
         if (!empty($data['variantes'])) {
-            // [null] = catalogue global (boutique_id null) quand aucune boutique sélectionnée
-            $boutiqueIds = [null];
-            if ($request->filled('boutiqueIds')) {
-                $parsed = array_values(array_filter(explode(',', $request->string('boutiqueIds'))));
-                if (!empty($parsed)) {
-                    $boutiqueIds = $parsed;
-                }
-            }
             $now = now();
             $toInsert = [];
             foreach ($data['variantes'] as $v) {
-                foreach ($boutiqueIds as $bId) {
-                    $toInsert[] = [
-                        'id'             => (string) Str::uuid(),
-                        'produit_id'     => $produit->id,
-                        'boutique_id'    => $bId,
-                        'taille'         => $v['taille'],
-                        'couleur'        => $v['couleur'],
-                        'quantite_stock' => $v['quantiteStock'],
-                        'seuil_alerte'   => $v['seuilAlerte'] ?? 5,
-                        'created_at'     => $now,
-                        'updated_at'     => $now,
-                    ];
-                }
+                $toInsert[] = [
+                    'id'             => (string) Str::uuid(),
+                    'produit_id'     => $produit->id,
+                    'boutique_id'    => $boutiqueId,
+                    'taille'         => $v['taille'],
+                    'couleur'        => $v['couleur'],
+                    'quantite_stock' => $v['quantiteStock'],
+                    'seuil_alerte'   => $v['seuilAlerte'] ?? 5,
+                    'created_at'     => $now,
+                    'updated_at'     => $now,
+                ];
             }
-            if ($toInsert) {
-                Variante::insert($toInsert);
-            }
+            Variante::insert($toInsert);
         }
 
         return $this->success($produit->load(['categorie', 'variantes', 'images']), 201);
@@ -182,13 +212,12 @@ class ProduitController extends Controller
      */
     public function update(Request $request, string $id): JsonResponse
     {
-        $produit = Produit::find($id);
-        if (!$produit) throw new NotFoundException('Produit introuvable', 'PRODUIT_NOT_FOUND');
+        $produit = $this->findOwnedProduit($request, $id);
 
         $data = $request->validate([
             'nom'            => 'sometimes|string',
             'description'    => 'sometimes|nullable|string',
-            'categorieId'    => 'sometimes|uuid|exists:categories,id',
+            'categorieId'    => 'sometimes|uuid',
             'prixVente'      => 'sometimes|numeric|min:0',
             'prixAchat'      => 'sometimes|numeric|min:0',
             'imageUrl'       => 'sometimes|nullable|string',
@@ -199,11 +228,15 @@ class ProduitController extends Controller
             'dateFinPromo'   => 'sometimes|nullable|date',
         ]);
 
+        if (isset($data['categorieId']) && !Categorie::where('boutique_id', $produit->boutique_id)->where('id', $data['categorieId'])->exists()) {
+            throw new NotFoundException('Categorie introuvable', 'CATEGORIE_NOT_FOUND');
+        }
+
         if (!empty($data['imageUrl']) && str_starts_with($data['imageUrl'], 'data:')) {
             try {
                 $data['imageUrl'] = $this->cloudinary->uploadBase64($data['imageUrl']);
             } catch (\RuntimeException $e) {
-                throw new \App\Exceptions\DomainException('IMAGE_UPLOAD_FAILED: ' . $e->getMessage(), 422, 'IMAGE_UPLOAD_FAILED');
+                throw new DomainException('IMAGE_UPLOAD_FAILED: ' . $e->getMessage(), 422, 'IMAGE_UPLOAD_FAILED');
             }
         }
 
@@ -235,81 +268,20 @@ class ProduitController extends Controller
         return $this->success($produit->fresh()->load(['categorie', 'variantes', 'images']));
     }
 
-    /**
-     * @OA\Patch(path="/produits/{id}/boutique", tags={"Produits"}, summary="Réattribuer toutes les variantes d'un produit à une boutique", security={{"bearerAuth":{}}},
-     *     @OA\Parameter(name="id", in="path", required=true, @OA\Schema(type="string", format="uuid")),
-     *     @OA\RequestBody(@OA\JsonContent(@OA\Property(property="boutiqueId", type="string", format="uuid", nullable=true))),
-     *     @OA\Response(response=200, description="Variantes réattribuées", @OA\JsonContent(ref="#/components/schemas/ApiResponse"))
-     * )
-     */
-    public function reassignBoutique(Request $request, string $id): JsonResponse
-    {
-        $produit = Produit::find($id);
-        if (!$produit) throw new NotFoundException('Produit introuvable', 'PRODUIT_NOT_FOUND');
-
-        $data = $request->validate([
-            'boutiqueId' => 'sometimes|nullable|uuid|exists:boutiques,id',
-        ]);
-        $nouvelleBoutiqueId = $data['boutiqueId'] ?? null;
-
-        $variantes = $produit->variantes()->get(['id', 'produit_id', 'boutique_id', 'taille', 'couleur']);
-
-        $deplacees = [];
-        $conflits  = [];
-
-        foreach ($variantes as $variante) {
-            if ($variante->boutique_id === $nouvelleBoutiqueId) continue;
-
-            $conflit = Variante::where('produit_id', $produit->id)
-                ->where('taille', $variante->taille)
-                ->where('couleur', $variante->couleur)
-                ->where('boutique_id', $nouvelleBoutiqueId)
-                ->where('id', '!=', $variante->id)
-                ->exists();
-
-            if ($conflit) {
-                $conflits[] = ['varianteId' => $variante->id, 'taille' => $variante->taille, 'couleur' => $variante->couleur];
-                continue;
-            }
-
-            $variante->update(['boutique_id' => $nouvelleBoutiqueId]);
-            $deplacees[] = $variante->id;
-        }
-
-        if (!empty($deplacees)) {
-            \App\Models\AuditLog::record(
-                $request->user()->id,
-                'PRODUIT_BOUTIQUE_REASSIGN',
-                'Produit',
-                $produit->id,
-                count($deplacees) . " variante(s) de {$produit->nom} réattribuée(s) à la boutique " . ($nouvelleBoutiqueId ?? 'catalogue global')
-                    . (count($conflits) ? ", " . count($conflits) . " en conflit non déplacée(s)" : '')
-            );
-        }
-
-        return $this->success([
-            'movedCount' => count($deplacees),
-            'conflicts'  => $conflits,
-            'produit'    => $produit->fresh()->load(['categorie', 'variantes', 'images']),
-        ]);
-    }
-
     public function addVariante(Request $request, string $id): JsonResponse
     {
-        $produit = Produit::find($id);
-        if (!$produit) throw new NotFoundException('Produit introuvable', 'PRODUIT_NOT_FOUND');
+        $produit = $this->findOwnedProduit($request, $id);
 
         $data = $request->validate([
             'taille'        => 'required|string',
             'couleur'       => 'required|string',
             'quantiteStock' => 'sometimes|integer|min:0',
             'seuilAlerte'   => 'sometimes|integer|min:0',
-            'boutiqueId'    => 'sometimes|nullable|uuid|exists:boutiques,id',
         ]);
 
         $variante = Variante::create([
             'produit_id'     => $produit->id,
-            'boutique_id'    => $data['boutiqueId'] ?? null,
+            'boutique_id'    => $produit->boutique_id,
             'taille'         => $data['taille'],
             'couleur'        => $data['couleur'],
             'quantite_stock' => $data['quantiteStock'] ?? 0,
@@ -326,18 +298,16 @@ class ProduitController extends Controller
      *     @OA\Response(response=404, description="Introuvable", @OA\JsonContent(ref="#/components/schemas/ErrorResponse"))
      * )
      */
-    public function destroy(string $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
-        $produit = Produit::find($id);
-        if (!$produit) throw new NotFoundException('Produit introuvable', 'PRODUIT_NOT_FOUND');
+        $produit = $this->findOwnedProduit($request, $id);
         $produit->delete();
         return $this->success(['message' => 'Produit supprimé', 'id' => $id]);
     }
 
     public function addImage(Request $request, string $id): JsonResponse
     {
-        $produit = Produit::find($id);
-        if (!$produit) throw new NotFoundException('Produit introuvable', 'PRODUIT_NOT_FOUND');
+        $produit = $this->findOwnedProduit($request, $id);
 
         $data = $request->validate(['url' => 'required|string']);
 
@@ -351,15 +321,16 @@ class ProduitController extends Controller
             $url = $data['url'];
         }
 
-        $ordre = ProduitImage::where('produit_id', $id)->max('ordre') + 1;
-        $image = ProduitImage::create(['produit_id' => $id, 'url' => $url, 'ordre' => $ordre]);
+        $ordre = ProduitImage::where('produit_id', $produit->id)->max('ordre') + 1;
+        $image = ProduitImage::create(['produit_id' => $produit->id, 'url' => $url, 'ordre' => $ordre]);
 
         return $this->success($image, 201);
     }
 
-    public function removeImage(string $id, string $imageId): JsonResponse
+    public function removeImage(Request $request, string $id, string $imageId): JsonResponse
     {
-        $image = ProduitImage::where('id', $imageId)->where('produit_id', $id)->first();
+        $produit = $this->findOwnedProduit($request, $id);
+        $image = ProduitImage::where('id', $imageId)->where('produit_id', $produit->id)->first();
         if (!$image) throw new NotFoundException('Image introuvable', 'IMAGE_NOT_FOUND');
         $this->cloudinary->deleteByUrl($image->url);
         $image->delete();
@@ -368,8 +339,7 @@ class ProduitController extends Controller
 
     public function mouvements(Request $request, string $id): JsonResponse
     {
-        $produit = Produit::find($id);
-        if (!$produit) throw new NotFoundException('Produit introuvable', 'PRODUIT_NOT_FOUND');
+        $produit = $this->findOwnedProduit($request, $id);
 
         $varianteIds = $produit->variantes()->pluck('id');
         $page  = max(1, (int) $request->get('page', 1));

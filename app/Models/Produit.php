@@ -16,7 +16,7 @@ class Produit extends Model
     public $incrementing = false;
 
     protected $fillable = [
-        'nom', 'sku', 'description', 'categorie_id',
+        'boutique_id', 'nom', 'sku', 'description', 'categorie_id',
         'prix_vente', 'prix_achat', 'image_url',
         'is_actif', 'en_promo', 'prix_promo', 'date_debut_promo', 'date_fin_promo',
     ];
@@ -55,6 +55,7 @@ class Produit extends Model
         });
     }
 
+    public function boutique(): BelongsTo { return $this->belongsTo(Boutique::class); }
     public function categorie(): BelongsTo { return $this->belongsTo(Categorie::class); }
     public function variantes(): HasMany { return $this->hasMany(Variante::class); }
     public function images(): HasMany { return $this->hasMany(ProduitImage::class); }

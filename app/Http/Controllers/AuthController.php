@@ -5,11 +5,16 @@ namespace App\Http\Controllers;
 use App\Exceptions\ConflictException;
 use App\Exceptions\ValidationException;
 use App\Http\Traits\ApiResponse;
+use App\Models\Abonnement;
+use App\Models\AuditLog;
+use App\Models\Boutique;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Str;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
 
@@ -68,11 +73,12 @@ class AuthController extends Controller
             'accessToken'  => $accessToken,
             'refreshToken' => $refreshToken,
             'user'         => [
-                'id'           => $user->id,
-                'email'        => $user->email,
-                'role'         => $user->role,
-                'boutiqueId'   => $user->boutique_id,
-                'boutiqueName' => $user->boutique?->nom ?? null,
+                'id'             => $user->id,
+                'email'          => $user->email,
+                'role'           => $user->role,
+                'boutiqueId'     => $user->boutique_id,
+                'boutiqueName'   => $user->boutique?->nom ?? null,
+                'boutiqueStatut' => $user->boutique?->statut ?? null,
             ],
         ]);
     }
@@ -131,6 +137,86 @@ class AuthController extends Controller
     public function me(Request $request): JsonResponse
     {
         return $this->success($request->user());
+    }
+
+    /**
+     * Auto-inscription publique d'une boutique : crée la boutique (statut
+     * ESSAI, 14 jours), son compte ADMIN, un abonnement d'essai, puis
+     * connecte directement l'admin. La boutique apparaît ensuite dans la
+     * liste du Super Admin pour suivi/activation d'un plan payant.
+     */
+    public function registerBoutique(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'nomBoutique' => 'required|string|max:150',
+            'ville'       => 'sometimes|nullable|string',
+            'whatsapp'    => 'sometimes|nullable|string',
+            'email'       => 'required|email|unique:users,email',
+            'password'    => 'required|string|min:8',
+        ]);
+
+        if (User::where('email', $data['email'])->exists()) {
+            throw new ConflictException('Un utilisateur avec cet email existe déjà', 'USER_EMAIL_EXISTS');
+        }
+
+        $base = Str::slug($data['nomBoutique']) ?: 'boutique';
+        $slug = $base;
+        $i = 2;
+        while (Boutique::where('slug', $slug)->exists()) {
+            $slug = "{$base}-{$i}";
+            $i++;
+        }
+
+        [$boutique, $user] = DB::transaction(function () use ($data, $slug) {
+            $boutique = Boutique::create([
+                'nom'       => $data['nomBoutique'],
+                'slug'      => $slug,
+                'ville'     => $data['ville'] ?? null,
+                'whatsapp'  => $data['whatsapp'] ?? null,
+                'email'     => $data['email'],
+                'is_active' => true,
+                'statut'    => 'ESSAI',
+            ]);
+
+            $user = User::create([
+                'email'         => $data['email'],
+                'password_hash' => Hash::make($data['password']),
+                'role'          => 'ADMIN',
+                'boutique_id'   => $boutique->id,
+            ]);
+
+            Abonnement::create([
+                'boutique_id' => $boutique->id,
+                'plan'        => 'ESSAI',
+                'statut'      => 'ACTIF',
+                'date_debut'  => now(),
+                'date_fin'    => now()->addDays(14),
+                'notes'       => 'Essai gratuit créé via inscription en ligne.',
+            ]);
+
+            return [$boutique, $user];
+        });
+
+        AuditLog::record($user->id, 'BOUTIQUE_SELF_REGISTER', 'Boutique', $boutique->id, "Auto-inscription boutique {$boutique->nom}");
+
+        $user->load('boutique');
+        $accessToken = JWTAuth::fromUser($user);
+        JWTAuth::factory()->setTTL(config('jwt.refresh_ttl'));
+        $refreshToken = JWTAuth::fromUser($user, ['token_type' => 'refresh']);
+        JWTAuth::factory()->setTTL(config('jwt.ttl'));
+
+        return $this->success([
+            'accessToken'  => $accessToken,
+            'refreshToken' => $refreshToken,
+            'user'         => [
+                'id'           => $user->id,
+                'email'        => $user->email,
+                'role'         => $user->role,
+                'boutiqueId'   => $user->boutique_id,
+                'boutiqueName' => $boutique->nom,
+            ],
+            'boutique' => $boutique,
+        ], 201);
     }
 
     /**

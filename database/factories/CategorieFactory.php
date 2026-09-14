@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Models\Boutique;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Str;
 
@@ -16,6 +17,7 @@ class CategorieFactory extends Factory
     {
         $nom = fake()->unique()->words(2, true);
         return [
+            'boutique_id' => Boutique::factory(),
             'nom'         => $nom,
             'slug'        => Str::slug($nom),
             'description' => fake()->randomElement(self::$groupes),

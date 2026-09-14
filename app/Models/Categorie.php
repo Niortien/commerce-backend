@@ -14,7 +14,7 @@ class Categorie extends Model
     public $incrementing = false;
     public $timestamps = false;
 
-    protected $fillable = ['nom', 'slug', 'description'];
+    protected $fillable = ['boutique_id', 'nom', 'slug', 'description'];
 
     protected static function boot(): void
     {
@@ -22,5 +22,6 @@ class Categorie extends Model
         static::creating(fn($m) => $m->id = (string) Str::uuid());
     }
 
+    public function boutique(): \Illuminate\Database\Eloquent\Relations\BelongsTo { return $this->belongsTo(Boutique::class); }
     public function produits(): HasMany { return $this->hasMany(Produit::class); }
 }

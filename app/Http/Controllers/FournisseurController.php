@@ -13,71 +13,66 @@ class FournisseurController extends Controller
 {
     use ApiResponse;
 
-    /**
-     * @OA\Get(path="/fournisseurs", tags={"Fournisseurs"}, summary="Liste des fournisseurs", security={{"bearerAuth":{}}},
-     *     @OA\Parameter(name="search", in="query", @OA\Schema(type="string")),
-     *     @OA\Response(response=200, description="Fournisseurs", @OA\JsonContent(ref="#/components/schemas/ApiResponse"))
-     * )
-     */
     public function index(Request $request): JsonResponse
     {
-        $q = Fournisseur::query()->orderBy('nom');
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $q = Fournisseur::where('boutique_id', $boutiqueId)->orderBy('nom');
         if ($request->filled('search')) $q->where('nom', 'like', '%' . $request->search . '%');
         return $this->success($q->get());
     }
 
-    public function show(string $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
-        $fournisseur = Fournisseur::with('entrees')->find($id);
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $fournisseur = Fournisseur::where('boutique_id', $boutiqueId)->with('entrees')->find($id);
         if (!$fournisseur) throw new NotFoundException('Fournisseur introuvable', 'FOURNISSEUR_NOT_FOUND');
         return $this->success($fournisseur);
     }
 
-    /**
-     * @OA\Post(path="/fournisseurs", tags={"Fournisseurs"}, summary="Créer un fournisseur", security={{"bearerAuth":{}}},
-     *     @OA\RequestBody(required=true,
-     *         @OA\JsonContent(required={"nom"},
-     *             @OA\Property(property="nom", type="string"),
-     *             @OA\Property(property="telephone", type="string", nullable=true),
-     *             @OA\Property(property="adresse", type="string", nullable=true),
-     *             @OA\Property(property="notes", type="string", nullable=true)
-     *         )
-     *     ),
-     *     @OA\Response(response=201, description="Fournisseur créé", @OA\JsonContent(ref="#/components/schemas/ApiResponse"))
-     * )
-     */
     public function store(Request $request): JsonResponse
     {
+        $boutiqueId = $this->tenantBoutiqueId($request);
+
         $data = $request->validate([
-            'nom'       => 'required|string|unique:fournisseurs,nom',
+            'nom'       => 'required|string',
             'telephone' => 'sometimes|nullable|string',
             'adresse'   => 'sometimes|nullable|string',
             'notes'     => 'sometimes|nullable|string',
         ]);
 
-        $fournisseur = Fournisseur::create($data);
+        if (Fournisseur::where('boutique_id', $boutiqueId)->where('nom', $data['nom'])->exists()) {
+            throw new ConflictException('Un fournisseur avec ce nom existe déjà', 'FOURNISSEUR_NOM_TAKEN');
+        }
+
+        $fournisseur = Fournisseur::create(['boutique_id' => $boutiqueId, ...$data]);
         return $this->success($fournisseur, 201);
     }
 
     public function update(Request $request, string $id): JsonResponse
     {
-        $fournisseur = Fournisseur::find($id);
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $fournisseur = Fournisseur::where('boutique_id', $boutiqueId)->find($id);
         if (!$fournisseur) throw new NotFoundException('Fournisseur introuvable', 'FOURNISSEUR_NOT_FOUND');
 
         $data = $request->validate([
-            'nom'       => 'sometimes|string|unique:fournisseurs,nom,' . $id,
+            'nom'       => 'sometimes|string',
             'telephone' => 'sometimes|nullable|string',
             'adresse'   => 'sometimes|nullable|string',
             'notes'     => 'sometimes|nullable|string',
         ]);
 
+        if (isset($data['nom']) && Fournisseur::where('boutique_id', $boutiqueId)->where('nom', $data['nom'])->where('id', '!=', $id)->exists()) {
+            throw new ConflictException('Un fournisseur avec ce nom existe déjà', 'FOURNISSEUR_NOM_TAKEN');
+        }
+
         $fournisseur->update($data);
         return $this->success($fournisseur->fresh());
     }
 
-    public function destroy(string $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
-        $fournisseur = Fournisseur::find($id);
+        $boutiqueId = $this->tenantBoutiqueId($request);
+        $fournisseur = Fournisseur::where('boutique_id', $boutiqueId)->find($id);
         if (!$fournisseur) throw new NotFoundException('Fournisseur introuvable', 'FOURNISSEUR_NOT_FOUND');
 
         if ($fournisseur->entrees()->exists()) {
