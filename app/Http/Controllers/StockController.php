@@ -27,7 +27,7 @@ class StockController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $boutiqueId = $this->resolveBoutiqueId($request);
+        $boutiqueId = $this->resolveBoutiqueIdForReports($request);
         $q = Variante::with(['produit.categorie', 'boutique'])->where('boutique_id', $boutiqueId)->whereHas('produit');
 
         if ($request->filled('categorieId')) {
@@ -51,7 +51,7 @@ class StockController extends Controller
      */
     public function alertes(Request $request): JsonResponse
     {
-        $boutiqueId = $this->resolveBoutiqueId($request);
+        $boutiqueId = $this->resolveBoutiqueIdForReports($request);
         $q = Variante::with(['produit.categorie', 'boutique'])
             ->where('boutique_id', $boutiqueId)
             ->whereHas('produit')
@@ -75,7 +75,7 @@ class StockController extends Controller
      */
     public function mouvements(Request $request): JsonResponse
     {
-        $boutiqueId = $this->resolveBoutiqueId($request);
+        $boutiqueId = $this->resolveBoutiqueIdForReports($request);
         $q = MouvementStock::with(['variante.produit', 'user'])
             ->whereHas('variante', fn($v) => $v->where('boutique_id', $boutiqueId))
             ->orderBy('created_at', 'desc');

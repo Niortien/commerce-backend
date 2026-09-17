@@ -40,7 +40,7 @@ class Controller extends BaseController
      * sur un endpoint d'écriture : un ADMIN/CAISSIER reste strictement limité
      * à sa propre boutique via tenantBoutiqueId.
      */
-    protected function resolveBoutiqueId(Request $request): string
+    protected function resolveBoutiqueIdForReports(Request $request): string
     {
         $user = $request->user();
 

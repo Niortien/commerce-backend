@@ -190,7 +190,7 @@ class CaisseController extends Controller
 
     public function resumeJour(Request $request): JsonResponse
     {
-        $boutiqueId = $this->resolveBoutiqueId($request);
+        $boutiqueId = $this->resolveBoutiqueIdForReports($request);
         $todayStart = now()->startOfDay();
 
         $txQuery = fn($q) => $q
