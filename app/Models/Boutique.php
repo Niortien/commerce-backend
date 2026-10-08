@@ -14,10 +14,15 @@ class Boutique extends Model
     public $incrementing = false;
 
     protected $fillable = [
-        'nom', 'slug', 'adresse', 'ville', 'whatsapp', 'email', 'telephone',
+        'nom', 'slug', 'type_commerce', 'adresse', 'ville', 'whatsapp', 'email', 'telephone',
         'logo_url', 'is_active', 'statut',
     ];
     protected $casts = ['is_active' => 'boolean'];
+
+    public const TYPES_COMMERCE = [
+        'MODE', 'CHAUSSURES', 'ALIMENTATION', 'SUPERMARCHE', 'PHARMACIE',
+        'ELECTRONIQUE', 'BEAUTE', 'QUINCAILLERIE', 'AUTRE',
+    ];
 
     public const STATUTS_ACTIFS = ['ESSAI', 'ACTIF'];
 

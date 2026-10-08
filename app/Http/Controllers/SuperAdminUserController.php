@@ -43,6 +43,7 @@ class SuperAdminUserController extends Controller
             'email'      => 'required|email',
             'password'   => 'required|string|min:8',
             'role'       => 'required|in:SUPER_ADMIN,ADMIN,CAISSIER',
+            'telephone'  => 'sometimes|nullable|string|max:30',
             'boutiqueId' => 'required_unless:role,SUPER_ADMIN|nullable|uuid|exists:boutiques,id',
         ]);
 
@@ -52,6 +53,7 @@ class SuperAdminUserController extends Controller
 
         $user = User::create([
             'email'         => $data['email'],
+            'telephone'     => $data['telephone'] ?? null,
             'password_hash' => Hash::make($data['password']),
             'role'          => $data['role'],
             'boutique_id'   => $data['role'] === 'SUPER_ADMIN' ? null : $data['boutiqueId'],
@@ -71,12 +73,14 @@ class SuperAdminUserController extends Controller
             'email'      => 'sometimes|email',
             'password'   => 'sometimes|string|min:8',
             'role'       => 'sometimes|in:SUPER_ADMIN,ADMIN,CAISSIER',
+            'telephone'  => 'sometimes|nullable|string|max:30',
             'boutiqueId' => 'sometimes|nullable|uuid|exists:boutiques,id',
         ]);
 
         $update = [];
         if (isset($data['email']))      $update['email']         = $data['email'];
         if (isset($data['role']))       $update['role']          = $data['role'];
+        if (array_key_exists('telephone', $data)) $update['telephone'] = $data['telephone'];
         if (array_key_exists('boutiqueId', $data)) $update['boutique_id'] = $data['boutiqueId'];
         if (isset($data['password']))   $update['password_hash'] = Hash::make($data['password']);
 

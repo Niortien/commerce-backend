@@ -75,6 +75,7 @@ class SuperAdminBoutiqueController extends Controller
     {
         $data = $request->validate([
             'nom'            => 'required|string|max:150',
+            'typeCommerce' => 'sometimes|in:'.implode(',', \App\Models\Boutique::TYPES_COMMERCE),
             'adresse'        => 'sometimes|nullable|string',
             'ville'          => 'sometimes|nullable|string',
             'whatsapp'       => 'sometimes|nullable|string',
@@ -93,6 +94,7 @@ class SuperAdminBoutiqueController extends Controller
             $boutique = Boutique::create([
                 'nom'       => $data['nom'],
                 'slug'      => $this->uniqueSlug($data['nom']),
+                'type_commerce' => $data['typeCommerce'] ?? 'MODE',
                 'adresse'   => $data['adresse'] ?? null,
                 'ville'     => $data['ville'] ?? null,
                 'whatsapp'  => $data['whatsapp'] ?? null,
@@ -139,6 +141,7 @@ class SuperAdminBoutiqueController extends Controller
 
         $data = $request->validate([
             'nom'       => 'sometimes|string|max:150',
+            'typeCommerce' => 'sometimes|in:'.implode(',', \App\Models\Boutique::TYPES_COMMERCE),
             'adresse'   => 'sometimes|nullable|string',
             'ville'     => 'sometimes|nullable|string',
             'whatsapp'  => 'sometimes|nullable|string',
@@ -149,6 +152,11 @@ class SuperAdminBoutiqueController extends Controller
         if (array_key_exists('logoUrl', $data)) {
             $data['logo_url'] = $data['logoUrl'];
             unset($data['logoUrl']);
+        }
+
+        if (array_key_exists('typeCommerce', $data)) {
+            $data['type_commerce'] = $data['typeCommerce'];
+            unset($data['typeCommerce']);
         }
 
         $b->update($data);
