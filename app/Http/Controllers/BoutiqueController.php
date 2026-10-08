@@ -36,6 +36,7 @@ class BoutiqueController extends Controller
 
         $data = $request->validate([
             'nom'      => 'sometimes|string|max:150',
+            'typeCommerce' => 'sometimes|in:'.implode(',', \App\Models\Boutique::TYPES_COMMERCE),
             'adresse'  => 'sometimes|nullable|string',
             'ville'    => 'sometimes|nullable|string',
             'whatsapp' => 'sometimes|nullable|string',
@@ -46,6 +47,11 @@ class BoutiqueController extends Controller
         if (array_key_exists('logoUrl', $data)) {
             $data['logo_url'] = $data['logoUrl'];
             unset($data['logoUrl']);
+        }
+
+        if (array_key_exists('typeCommerce', $data)) {
+            $data['type_commerce'] = $data['typeCommerce'];
+            unset($data['typeCommerce']);
         }
 
         $boutique->update($data);

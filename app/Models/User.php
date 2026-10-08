@@ -19,7 +19,7 @@ class User extends Authenticatable implements JWTSubject
     protected $keyType = 'string';
     public $incrementing = false;
 
-    protected $fillable = ['email', 'password_hash', 'role', 'boutique_id'];
+    protected $fillable = ['email', 'telephone', 'password_hash', 'role', 'boutique_id'];
     protected $hidden = ['password_hash'];
 
     protected static function boot(): void
