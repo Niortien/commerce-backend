@@ -62,6 +62,7 @@ class AuthController extends Controller
         }
 
         $user->load('boutique');
+        AuditLog::record($user->id, 'CONNEXION', 'User', $user->id, "Connexion de {$user->email}");
 
         $accessToken = JWTAuth::fromUser($user);
 
@@ -111,6 +112,10 @@ class AuthController extends Controller
 
         try {
             $payload     = JWTAuth::setToken($request->refreshToken)->getPayload();
+            // Un jeton de consultation du Super Admin ne s'échange jamais contre un accès complet.
+            if ($payload->get('consultation')) {
+                throw new ConflictException('Refresh token invalide', 'AUTH_INVALID_REFRESH');
+            }
             $user        = User::findOrFail($payload->get('sub'));
             $accessToken = JWTAuth::fromUser($user);
 

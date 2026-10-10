@@ -17,7 +17,7 @@ class EnsureBoutiqueActive
     {
         $user = $request->user();
 
-        if ($user && $user->role !== 'SUPER_ADMIN' && $user->boutique_id) {
+        if ($user && $user->role !== 'SUPER_ADMIN' && $user->boutique_id && !ConsultationLectureSeule::estConsultation()) {
             $boutique = $user->boutique;
             if (!$boutique || !$boutique->accesAutorise()) {
                 throw new DomainException(

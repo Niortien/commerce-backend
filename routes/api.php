@@ -6,6 +6,7 @@ use App\Http\Controllers\BalleController;
 use App\Http\Controllers\BoutiqueController;
 use App\Http\Controllers\CategorieController;
 use App\Http\Controllers\ClientController;
+use App\Http\Controllers\ConsultationController;
 use App\Http\Controllers\CaisseController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\DemarqueController;
@@ -44,7 +45,7 @@ Route::prefix('v1')->group(function () {
     Route::get('lookbook-photos/publiees', [LookbookPhotoController::class, 'publicIndex']);
 
     // ── Protected routes ───────────────────────────────────────────────────
-    Route::middleware('auth:api')->group(function () {
+    Route::middleware(['auth:api', 'consultation'])->group(function () {
 
         Route::post('auth/logout', [AuthController::class, 'logout']);
         Route::get('auth/me',      [AuthController::class, 'me']);
@@ -70,6 +71,11 @@ Route::prefix('v1')->group(function () {
             Route::delete('users/{id}',        [SuperAdminUserController::class, 'destroy']);
 
             Route::get('audit-logs',           [AuditLogController::class, 'index']);
+            Route::get('audit-logs/actions',   [AuditLogController::class, 'actions']);
+
+            // Ouvrir l'espace d'un admin ou d'un caissier, en lecture seule
+            Route::post('users/{id}/consulter',     [ConsultationController::class, 'utilisateur']);
+            Route::post('boutiques/{id}/consulter', [ConsultationController::class, 'boutique']);
         });
 
         // ── Messagerie Super Admin ↔ Admin ─────────────────────────────────
