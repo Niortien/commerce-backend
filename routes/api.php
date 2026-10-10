@@ -7,6 +7,7 @@ use App\Http\Controllers\BoutiqueController;
 use App\Http\Controllers\CategorieController;
 use App\Http\Controllers\ClientController;
 use App\Http\Controllers\CaisseController;
+use App\Http\Controllers\ChatController;
 use App\Http\Controllers\DemarqueController;
 use App\Http\Controllers\DevisController;
 use App\Http\Controllers\EntreeController;
@@ -69,6 +70,16 @@ Route::prefix('v1')->group(function () {
             Route::delete('users/{id}',        [SuperAdminUserController::class, 'destroy']);
 
             Route::get('audit-logs',           [AuditLogController::class, 'index']);
+        });
+
+        // ── Messagerie Super Admin ↔ Admin ─────────────────────────────────
+        // Hors boutique.active : un admin dont l'abonnement a expiré doit pouvoir écrire au support.
+        Route::middleware('role:SUPER_ADMIN,ADMIN')->prefix('chat')->group(function () {
+            Route::get('conversations',                [ChatController::class, 'conversations']);
+            Route::post('conversations',               [ChatController::class, 'open']);
+            Route::get('conversations/{id}/messages',  [ChatController::class, 'messages']);
+            Route::post('conversations/{id}/messages', [ChatController::class, 'send'])->middleware('throttle:60,1');
+            Route::post('conversations/{id}/read',     [ChatController::class, 'markRead']);
         });
 
         // ── Espace boutique (ADMIN + CAISSIER) — nécessite un accès actif ──

@@ -48,6 +48,15 @@ class BoutiqueController extends Controller
             unset($data['logoUrl']);
         }
 
+        // Le type de commerce décide des pages de la boutique : seul le Super Admin le change.
+        if ($request->has('typeCommerce')) {
+            throw new \App\Exceptions\DomainException(
+                'Seul le Super Admin peut changer le type de commerce de la boutique',
+                403,
+                'TYPE_COMMERCE_RESERVE'
+            );
+        }
+
         $boutique->update($data);
         return $this->success($boutique->fresh());
     }

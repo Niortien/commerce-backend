@@ -19,10 +19,17 @@ class Boutique extends Model
     ];
     protected $casts = ['is_active' => 'boolean'];
 
+
     public const STATUTS_ACTIFS = ['ESSAI', 'ACTIF'];
 
-    /** Types de commerce : choisi à l'inscription, modifiable uniquement par le Super Admin. */
-    public const TYPES_COMMERCE = ['VETEMENTS', 'RESTAURANT', 'QUINCAILLERIE', 'FRIPERIE'];
+    /**
+     * Types de commerce : choisi à l'inscription, modifiable uniquement par le Super Admin.
+     * Restaurant, quincaillerie et friperie ont des modules métier ; les autres utilisent les pages standard.
+     */
+    public const TYPES_COMMERCE = [
+        'VETEMENTS', 'RESTAURANT', 'QUINCAILLERIE', 'FRIPERIE',
+        'CHAUSSURES', 'ALIMENTATION', 'SUPERMARCHE', 'PHARMACIE', 'ELECTRONIQUE', 'BEAUTE', 'AUTRE',
+    ];
 
     protected static function boot(): void
     {

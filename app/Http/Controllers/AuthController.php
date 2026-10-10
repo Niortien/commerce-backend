@@ -150,6 +150,7 @@ class AuthController extends Controller
         $data = $request->validate([
             'nomBoutique' => 'required|string|max:150',
             'typeCommerce' => 'sometimes|in:' . implode(',', Boutique::TYPES_COMMERCE),
+            'telephone'    => 'sometimes|nullable|string|max:30',
             'ville'       => 'sometimes|nullable|string',
             'whatsapp'    => 'sometimes|nullable|string',
             'email'       => 'required|email|unique:users,email',
@@ -182,6 +183,7 @@ class AuthController extends Controller
 
             $user = User::create([
                 'email'         => $data['email'],
+                'telephone'     => $data['telephone'] ?? null,
                 'password_hash' => Hash::make($data['password']),
                 'role'          => 'ADMIN',
                 'boutique_id'   => $boutique->id,
