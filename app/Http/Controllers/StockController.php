@@ -28,7 +28,7 @@ class StockController extends Controller
     public function index(Request $request): JsonResponse
     {
         $boutiqueId = $this->resolveBoutiqueIdForReports($request);
-        $q = Variante::with(['produit.categorie', 'boutique'])->where('boutique_id', $boutiqueId)->whereHas('produit');
+        $q = Variante::with(['produit.categorie', 'boutique'])->where('boutique_id', $boutiqueId)->whereHas('produit', fn($p) => $p->where('nature', '!=', 'PLAT'));
 
         if ($request->filled('categorieId')) {
             $q->whereHas('produit', fn($p) => $p->where('categorie_id', $request->categorieId));
@@ -54,7 +54,8 @@ class StockController extends Controller
         $boutiqueId = $this->resolveBoutiqueIdForReports($request);
         $q = Variante::with(['produit.categorie', 'boutique'])
             ->where('boutique_id', $boutiqueId)
-            ->whereHas('produit')
+            // Un plat n'a pas de stock propre ; une pièce unique vendue n'est pas une rupture à réapprovisionner.
+            ->whereHas('produit', fn($p) => $p->where('nature', '!=', 'PLAT')->where('piece_unique', false))
             ->whereColumn('quantite_stock', '<=', 'seuil_alerte');
 
         $page  = max(1, (int) $request->get('page', 1));

@@ -86,7 +86,7 @@ class EntreeController extends Controller
             'dateOperation'=> 'sometimes|nullable|date',
             'lignes'       => 'required|array|min:1',
             'lignes.*.varianteId'       => 'sometimes|nullable|uuid',
-            'lignes.*.quantite'         => 'required|integer|min:1',
+            'lignes.*.quantite'         => 'required|numeric|min:0.001',
             'lignes.*.prixUnitaire'     => 'required|numeric|min:0',
             'lignes.*.newProduit'       => 'sometimes|nullable|array',
         ]);
@@ -133,6 +133,8 @@ class EntreeController extends Controller
                         'prix_vente'   => $np['prixVente'],
                         'prix_achat'   => $np['prixAchat'],
                         'image_url'    => $np['imageUrl'] ?? null,
+                        'unite'        => in_array($np['unite'] ?? 'PIECE', Produit::UNITES, true) ? ($np['unite'] ?? 'PIECE') : 'PIECE',
+                        'nature'       => in_array($np['nature'] ?? 'ARTICLE', ['ARTICLE', 'INGREDIENT'], true) ? ($np['nature'] ?? 'ARTICLE') : 'ARTICLE',
                     ]);
                     $variante = Variante::create([
                         'produit_id'     => $produit->id,
@@ -143,6 +145,11 @@ class EntreeController extends Controller
                         'seuil_alerte'   => $np['seuilAlerte'] ?? 5,
                     ]);
                     $varianteId = $variante->id;
+                }
+
+                $produitLigne = Variante::with('produit')->find($varianteId)?->produit;
+                if ($produitLigne?->seVendALUnite() && floor((float) $ligne['quantite']) != (float) $ligne['quantite']) {
+                    throw new \App\Exceptions\ValidationException("« {$produitLigne->nom} » se compte à l'unité : la quantité doit être un nombre entier", 'QUANTITE_ENTIERE');
                 }
 
                 $entree->lignes()->create([

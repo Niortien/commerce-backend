@@ -90,13 +90,25 @@ class CategorieControllerTest extends TestCase
           ->assertJsonPath('error.code', 'CATEGORIE_SLUG_TAKEN');
     }
 
-    public function test_store_rejette_description_invalide(): void
+    public function test_store_accepte_un_groupe_libre(): void
+    {
+        $this->actingAsAdmin();
+
+        // Chaque boutique crée ses propres groupes : un restaurant range ses plats dans « Grillades ».
+        $this->postJson('/api/v1/categories', [
+            'nom'         => 'Poulet braisé',
+            'description' => 'Grillades',
+        ])->assertStatus(201)
+          ->assertJsonPath('data.description', 'Grillades');
+    }
+
+    public function test_store_rejette_un_groupe_trop_long(): void
     {
         $this->actingAsAdmin();
 
         $this->postJson('/api/v1/categories', [
             'nom'         => 'Test',
-            'description' => 'GroupeInexistant',
+            'description' => str_repeat('a', 61),
         ])->assertStatus(422);
     }
 

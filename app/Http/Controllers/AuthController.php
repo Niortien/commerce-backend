@@ -149,6 +149,7 @@ class AuthController extends Controller
     {
         $data = $request->validate([
             'nomBoutique' => 'required|string|max:150',
+            'typeCommerce' => 'sometimes|in:' . implode(',', Boutique::TYPES_COMMERCE),
             'ville'       => 'sometimes|nullable|string',
             'whatsapp'    => 'sometimes|nullable|string',
             'email'       => 'required|email|unique:users,email',
@@ -171,6 +172,7 @@ class AuthController extends Controller
             $boutique = Boutique::create([
                 'nom'       => $data['nomBoutique'],
                 'slug'      => $slug,
+                'type_commerce' => $data['typeCommerce'] ?? 'VETEMENTS',
                 'ville'     => $data['ville'] ?? null,
                 'whatsapp'  => $data['whatsapp'] ?? null,
                 'email'     => $data['email'],
@@ -184,6 +186,8 @@ class AuthController extends Controller
                 'role'          => 'ADMIN',
                 'boutique_id'   => $boutique->id,
             ]);
+
+            app(\App\Services\CategoriesDeDepart::class)->creer($boutique);
 
             Abonnement::create([
                 'boutique_id' => $boutique->id,

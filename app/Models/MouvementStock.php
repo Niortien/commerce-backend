@@ -18,6 +18,7 @@ class MouvementStock extends Model
         'variante_id', 'type', 'quantite', 'motif',
         'reference_entree', 'reference_sortie', 'user_id',
     ];
+    protected $casts = ['quantite' => 'float'];
 
     protected static function boot(): void
     {

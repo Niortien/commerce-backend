@@ -15,11 +15,6 @@ class CategorieController extends Controller
 {
     use ApiResponse;
 
-    private const GROUPES = [
-        'Hauts', 'Chemises & Vestes', 'Tenues', 'Pulls & Maillots',
-        'Bas', 'Culotte', 'Chaussures', 'Sacs & Divers', 'Parfum & Bijoux',
-    ];
-
     public function index(Request $request): JsonResponse
     {
         $boutiqueId = $this->tenantBoutiqueId($request);
@@ -35,7 +30,8 @@ class CategorieController extends Controller
 
         $data = $request->validate([
             'nom'         => 'required|string|max:100',
-            'description' => 'required|string|in:' . implode(',', self::GROUPES),
+            // Groupe libre choisi par la boutique (« Grillades », « Plomberie »…), facultatif.
+            'description' => 'sometimes|nullable|string|max:60',
             'slug'        => 'sometimes|nullable|string|max:100',
         ]);
 
@@ -52,7 +48,7 @@ class CategorieController extends Controller
             'boutique_id' => $boutiqueId,
             'nom'         => $data['nom'],
             'slug'        => $slug,
-            'description' => $data['description'],
+            'description' => isset($data['description']) ? trim($data['description']) ?: null : null,
         ]);
 
         Cache::forget("categories.{$boutiqueId}");
@@ -68,7 +64,7 @@ class CategorieController extends Controller
 
         $data = $request->validate([
             'nom'         => 'sometimes|string|max:100',
-            'description' => 'sometimes|string|in:' . implode(',', self::GROUPES),
+            'description' => 'sometimes|nullable|string|max:60',
             'slug'        => 'sometimes|string|max:100',
         ]);
 

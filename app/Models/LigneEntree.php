@@ -13,7 +13,7 @@ class LigneEntree extends Model
     public $timestamps = false;
 
     protected $fillable = ['entree_id', 'variante_id', 'quantite', 'prix_unitaire'];
-    protected $casts = ['prix_unitaire' => 'decimal:2'];
+    protected $casts = ['prix_unitaire' => 'decimal:2', 'quantite' => 'float'];
 
     protected static function boot(): void
     {

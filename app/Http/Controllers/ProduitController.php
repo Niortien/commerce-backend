@@ -78,6 +78,10 @@ class ProduitController extends Controller
         if ($request->filled('categorieId')) $q->where('categorie_id', $request->categorieId);
         if ($request->filled('search'))       $q->where('nom', 'like', '%' . $request->search . '%');
         if ($request->filled('enPromo'))      $q->where('en_promo', filter_var($request->enPromo, FILTER_VALIDATE_BOOLEAN));
+        if ($request->filled('balleId'))      $q->where('balle_id', $request->balleId);
+        // Friperie : EN_RAYON = encore en stock ; VENDUE = pièce unique partie.
+        if ($request->get('disponibilite') === 'EN_RAYON') $q->whereHas('variantes', fn($v) => $v->where('quantite_stock', '>', 0));
+        if ($request->get('disponibilite') === 'VENDUE')   $q->where('piece_unique', true)->whereDoesntHave('variantes', fn($v) => $v->where('quantite_stock', '>', 0));
 
         $page  = max(1, (int) $request->get('page', 1));
         $limit = min(200, max(1, (int) $request->get('limit', 20)));
@@ -145,15 +149,25 @@ class ProduitController extends Controller
             'prixVente'   => 'required|numeric|min:0',
             'prixAchat'   => 'required|numeric|min:0',
             'imageUrl'    => 'sometimes|nullable|string',
+            'unite'       => 'sometimes|in:' . implode(',', Produit::UNITES),
+            'nature'      => 'sometimes|in:' . implode(',', Produit::NATURES),
+            'conditionnementUnite'     => 'sometimes|nullable|in:' . implode(',', Produit::UNITES),
+            'conditionnementQuantite'  => 'sometimes|nullable|numeric|min:0.001|required_with:conditionnementUnite',
+            'pieceUnique' => 'sometimes|boolean',
             'variantes'   => 'sometimes|array',
             'variantes.*.taille'         => 'required_with:variantes|string',
             'variantes.*.couleur'        => 'required_with:variantes|string',
-            'variantes.*.quantiteStock'  => 'required_with:variantes|integer|min:0',
-            'variantes.*.seuilAlerte'    => 'sometimes|integer|min:0',
+            'variantes.*.quantiteStock'  => 'required_with:variantes|numeric|min:0',
+            'variantes.*.seuilAlerte'    => 'sometimes|numeric|min:0',
         ]);
 
         $categorie = Categorie::where('boutique_id', $boutiqueId)->find($data['categorieId']);
         if (!$categorie) throw new NotFoundException('Categorie introuvable', 'CATEGORIE_NOT_FOUND');
+
+        $pieceUnique = (bool) ($data['pieceUnique'] ?? false);
+        if ($pieceUnique && (count($data['variantes'] ?? []) > 1 || collect($data['variantes'] ?? [])->contains(fn($v) => (float) $v['quantiteStock'] > 1))) {
+            throw new \App\Exceptions\ValidationException("Une pièce unique ne se stocke qu'en un seul exemplaire", 'PIECE_UNIQUE_QUANTITE');
+        }
 
         if (!empty($data['sku']) && Produit::where('boutique_id', $boutiqueId)->where('sku', $data['sku'])->exists()) {
             throw new \App\Exceptions\ConflictException('Ce SKU est déjà utilisé dans votre boutique', 'PRODUIT_SKU_TAKEN');
@@ -179,6 +193,11 @@ class ProduitController extends Controller
             'prix_vente'   => $data['prixVente'],
             'prix_achat'   => $data['prixAchat'],
             'image_url'    => $imageUrl,
+            'unite'        => $data['unite'] ?? 'PIECE',
+            'nature'       => $data['nature'] ?? 'ARTICLE',
+            'conditionnement_unite'    => $data['conditionnementUnite'] ?? null,
+            'conditionnement_quantite' => $data['conditionnementQuantite'] ?? null,
+            'piece_unique' => $pieceUnique,
         ]);
 
         if (!empty($data['variantes'])) {
@@ -192,7 +211,7 @@ class ProduitController extends Controller
                     'taille'         => $v['taille'],
                     'couleur'        => $v['couleur'],
                     'quantite_stock' => $v['quantiteStock'],
-                    'seuil_alerte'   => $v['seuilAlerte'] ?? 5,
+                    'seuil_alerte'   => $v['seuilAlerte'] ?? ($pieceUnique ? 0 : 5),
                     'created_at'     => $now,
                     'updated_at'     => $now,
                 ];
@@ -226,6 +245,10 @@ class ProduitController extends Controller
             'prixPromo'      => 'sometimes|nullable|numeric|min:0',
             'dateDebutPromo' => 'sometimes|nullable|date',
             'dateFinPromo'   => 'sometimes|nullable|date',
+            'unite'          => 'sometimes|in:' . implode(',', Produit::UNITES),
+            'nature'         => 'sometimes|in:' . implode(',', Produit::NATURES),
+            'conditionnementUnite'    => 'sometimes|nullable|in:' . implode(',', Produit::UNITES),
+            'conditionnementQuantite' => 'sometimes|nullable|numeric|min:0.001',
         ]);
 
         if (isset($data['categorieId']) && !Categorie::where('boutique_id', $produit->boutique_id)->where('id', $data['categorieId'])->exists()) {
@@ -245,6 +268,8 @@ class ProduitController extends Controller
             'prixVente' => 'prix_vente', 'prixAchat' => 'prix_achat', 'imageUrl' => 'image_url',
             'isActif' => 'is_actif', 'enPromo' => 'en_promo', 'prixPromo' => 'prix_promo',
             'dateDebutPromo' => 'date_debut_promo', 'dateFinPromo' => 'date_fin_promo',
+            'unite' => 'unite', 'nature' => 'nature',
+            'conditionnementUnite' => 'conditionnement_unite', 'conditionnementQuantite' => 'conditionnement_quantite',
         ];
 
         $update = [];
@@ -275,8 +300,8 @@ class ProduitController extends Controller
         $data = $request->validate([
             'taille'        => 'required|string',
             'couleur'       => 'required|string',
-            'quantiteStock' => 'sometimes|integer|min:0',
-            'seuilAlerte'   => 'sometimes|integer|min:0',
+            'quantiteStock' => 'sometimes|numeric|min:0',
+            'seuilAlerte'   => 'sometimes|numeric|min:0',
         ]);
 
         $variante = Variante::create([
