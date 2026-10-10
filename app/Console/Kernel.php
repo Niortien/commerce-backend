@@ -12,7 +12,8 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        // $schedule->command('inspire')->hourly();
+        // Fins d'abonnement et d'essai : mail aux Super Admins, même si la boutique ne se connecte plus.
+        $schedule->command('abonnements:signaler-fins')->hourly()->withoutOverlapping();
     }
 
     /**

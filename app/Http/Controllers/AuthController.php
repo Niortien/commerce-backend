@@ -210,6 +210,9 @@ class AuthController extends Controller
 
         AuditLog::record($user->id, 'BOUTIQUE_SELF_REGISTER', 'Boutique', $boutique->id, "Auto-inscription boutique {$boutique->nom}");
 
+        // Mail aux Super Admins, envoyé après la réponse : l'inscription ne l'attend pas.
+        dispatch(fn () => app(\App\Services\AlertesSuperAdmin::class)->nouvelleInscription($boutique, $user))->afterResponse();
+
         $user->load('boutique');
         $accessToken = JWTAuth::fromUser($user);
         JWTAuth::factory()->setTTL(config('jwt.refresh_ttl'));

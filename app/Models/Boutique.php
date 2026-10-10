@@ -98,6 +98,9 @@ class Boutique extends Model
 
         if ($expire && $this->statut !== 'SUSPENDU') {
             $this->update(['statut' => 'SUSPENDU', 'is_active' => false]);
+            // Les Super Admins sont prévenus (une seule fois), sans ralentir la requête en cours.
+            $boutique = $this;
+            dispatch(fn () => app(\App\Services\AlertesSuperAdmin::class)->signalerFinSiTerminee($boutique))->afterResponse();
         }
     }
 

@@ -21,6 +21,7 @@ class Abonnement extends Model
     protected $casts = [
         'date_debut' => 'datetime',
         'date_fin'   => 'datetime',
+        'fin_signalee_at' => 'datetime',
         'montant'    => 'decimal:2',
     ];
 
