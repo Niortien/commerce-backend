@@ -128,13 +128,13 @@ class ConsultationEtAuditTest extends TestCase
         $this->assertTrue(AuditLog::where('action', 'CONNEXION')->where('user_id', $admin->id)->exists());
 
         // Filtré sur la boutique : la connexion de son admin et la consultation du Super Admin, pas l'autre boutique.
-        $this->getJson("/api/v1/super-admin/audit-logs?boutiqueId={$admin->boutique_id}")
+        // Les deux entrées peuvent tomber dans la même seconde : on ne suppose pas leur ordre.
+        $journal = collect($this->getJson("/api/v1/super-admin/audit-logs?boutiqueId={$admin->boutique_id}")
             ->assertStatus(200)
             ->assertJsonCount(2, 'data')
-            ->assertJsonPath('data.0.action', 'CONSULTATION_ESPACE')
-            ->assertJsonPath('data.0.user.email', $super->email)
-            ->assertJsonPath('data.1.action', 'CONNEXION')
-            ->assertJsonPath('data.1.user.boutique.nom', $admin->boutique->nom);
+            ->json('data'))->keyBy('action');
+        $this->assertSame($super->email, $journal['CONSULTATION_ESPACE']['user']['email']);
+        $this->assertSame($admin->boutique->nom, $journal['CONNEXION']['user']['boutique']['nom']);
 
         $this->getJson('/api/v1/super-admin/audit-logs?action=CONNEXION')->assertJsonCount(1, 'data');
         $this->getJson('/api/v1/super-admin/audit-logs?role=SUPER_ADMIN')->assertJsonCount(1, 'data');
