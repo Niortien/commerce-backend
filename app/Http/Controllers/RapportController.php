@@ -127,7 +127,7 @@ class RapportController extends Controller
                 'produitId'      => $r->variante->produit->id,
                 'nom'            => $r->variante->produit->nom,
                 'sku'            => $r->variante->produit->sku,
-                'quantiteTotale' => (int) $r->totalVendu,
+                'quantiteTotale' => (float) $r->totalVendu,
                 'montantTotal'   => number_format((float) $r->montantTotal, 2, '.', ''),
             ])
             ->values();
@@ -333,7 +333,7 @@ class RapportController extends Controller
                 'produitId'      => $r->variante->produit->id,
                 'nom'            => $r->variante->produit->nom,
                 'sku'            => $r->variante->produit->sku,
-                'quantiteTotale' => (int) $r->totalVendu,
+                'quantiteTotale' => (float) $r->totalVendu,
                 'montantTotal'   => number_format((float) $r->montantTotal, 2, '.', ''),
             ])
             ->values()

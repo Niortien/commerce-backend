@@ -8,7 +8,8 @@ use App\Http\Traits\ApiResponse;
 use App\Models\CaisseSession;
 use App\Models\Sortie;
 use App\Models\Variante;
-use App\Services\StockMovementService;
+use App\Services\CreditService;
+use App\Services\SortieService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,7 +19,7 @@ class SortieController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private StockMovementService $movements) {}
+    public function __construct(private SortieService $sorties, private CreditService $credits) {}
 
     private function findOwned(Request $request, string $id): Sortie
     {
@@ -86,10 +87,18 @@ class SortieController extends Controller
             'montant'       => 'nullable|numeric|min:0.01|required_if:type,DEPENSE',
             'remiseMontant' => 'sometimes|nullable|numeric|min:0',
             'dateOperation' => 'sometimes|nullable|date',
+            'modeService'   => 'sometimes|nullable|in:' . implode(',', SortieService::MODES_SERVICE),
+            'tableLabel'    => 'sometimes|nullable|string|max:30',
             'lignes'        => 'array|min:1|required_unless:type,DEPENSE',
             'lignes.*.varianteId'    => 'required|uuid',
-            'lignes.*.quantite'      => 'required|integer|min:1',
+            // Décimale pour les produits au poids ou au mètre ; SortieService exige un entier pour les pièces.
+            'lignes.*.quantite'      => 'required|numeric|min:0.001',
             'lignes.*.prixUnitaire'  => 'required|numeric|min:0',
+            // Vente à crédit (quincaillerie) : le client, l'échéance et un éventuel acompte.
+            'clientId'       => 'sometimes|nullable|uuid',
+            'echeanceJours'  => 'sometimes|nullable|integer|min:1|max:365',
+            'acompteMontant' => 'sometimes|nullable|numeric|min:0',
+            'acompteMode'    => 'sometimes|nullable|in:' . implode(',', CreditService::MODES_PAIEMENT),
         ]);
 
         $boutiqueId = $this->tenantBoutiqueId($request);
@@ -110,55 +119,18 @@ class SortieController extends Controller
             return $this->success($sortie->load(['user', 'boutique']), 201);
         }
 
-        foreach ($data['lignes'] ?? [] as $l) {
-            if (!Variante::where('id', $l['varianteId'])->where('boutique_id', $boutiqueId)->exists()) {
-                throw new NotFoundException('Variante introuvable', 'VARIANTE_NOT_FOUND');
-            }
-        }
-
-        if ($data['type'] === 'VENTE') {
-            $session = CaisseSession::where('statut', 'OUVERTE')->where('boutique_id', $boutiqueId)->first();
-            if (!$session) {
-                throw new ConflictException('Aucune session de caisse ouverte', 'NO_ACTIVE_SESSION');
-            }
-        }
-
-        $totalAvant = '0.00';
-        foreach ($data['lignes'] as $l) {
-            $totalAvant = bcadd($totalAvant, bcmul((string) $l['prixUnitaire'], (string) $l['quantite'], 2), 2);
-        }
-        $remise = (string) ($data['remiseMontant'] ?? '0');
-        $totalMontant = bcsub($totalAvant, $remise, 2);
-
-        if (bccomp($totalMontant, '0', 2) < 0) {
-            throw new \App\Exceptions\ValidationException('La remise dépasse le total', 'REMISE_INVALIDE');
-        }
-
-        $reference = 'SRT-' . strtoupper(Str::random(8));
-
-        $sortie = DB::transaction(function () use ($data, $boutiqueId, $userId, $reference, $totalAvant, $remise, $totalMontant) {
-            $sortie = Sortie::create([
-                'reference'          => $reference,
-                'type'               => $data['type'],
-                'total_avant_remise' => $totalAvant,
-                'remise_montant'     => $remise,
-                'total_montant'      => $totalMontant,
-                'notes'              => $data['notes'] ?? null,
-                'user_id'            => $userId,
-                'boutique_id'        => $boutiqueId,
-            ]);
-
-            foreach ($data['lignes'] as $ligne) {
-                $sortie->lignes()->create([
-                    'variante_id'   => $ligne['varianteId'],
-                    'quantite'      => $ligne['quantite'],
-                    'prix_unitaire' => $ligne['prixUnitaire'],
-                ]);
-                $this->movements->create($ligne['varianteId'], 'SORTIE', $ligne['quantite'], $userId, null, null, $reference);
-            }
-
-            return $sortie;
-        });
+        $sortie = $this->sorties->creer($boutiqueId, $userId, $data['type'], $data['lignes'], [
+            'remiseMontant' => $data['remiseMontant'] ?? null,
+            'notes'         => $data['notes'] ?? null,
+            'modeService'   => $data['modeService'] ?? null,
+            'tableLabel'    => $data['tableLabel'] ?? null,
+            'credit'        => empty($data['clientId']) ? null : [
+                'clientId'       => $data['clientId'],
+                'echeanceJours'  => $data['echeanceJours'] ?? null,
+                'acompteMontant' => $data['acompteMontant'] ?? null,
+                'acompteMode'    => $data['acompteMode'] ?? null,
+            ],
+        ]);
 
         return $this->success($sortie->load(['lignes.variante.produit', 'user', 'boutique', 'transaction']), 201);
     }
@@ -178,9 +150,9 @@ class SortieController extends Controller
 
         $userId = $request->user()->id;
         DB::transaction(function () use ($sortie, $userId) {
-            foreach ($sortie->lignes as $ligne) {
-                $this->movements->create($ligne->variante_id, 'RETOUR', $ligne->quantite, $userId, 'Annulation sortie ' . $sortie->reference);
-            }
+            $this->sorties->remettreEnStock($sortie, $userId);
+            // Vente supprimée : elle disparaît aussi du compte du client (un acompte versé reste acquis).
+            \App\Models\OperationCredit::where('sortie_id', $sortie->id)->whereIn('type', ['VENTE', 'ANNULATION'])->delete();
             $sortie->delete();
         });
 
@@ -199,9 +171,8 @@ class SortieController extends Controller
 
         $userId = $request->user()->id;
         DB::transaction(function () use ($sortie, $userId) {
-            foreach ($sortie->lignes as $ligne) {
-                $this->movements->create($ligne->variante_id, 'RETOUR', $ligne->quantite, $userId, 'Annulation sortie ' . $sortie->reference);
-            }
+            $this->sorties->remettreEnStock($sortie, $userId);
+            $this->credits->annulerVente($sortie, $userId);
             $sortie->update(['notes' => '[ANNULÉE] ' . ($sortie->notes ?? '')]);
         });
 

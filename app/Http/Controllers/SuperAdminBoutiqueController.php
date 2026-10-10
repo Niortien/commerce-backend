@@ -42,6 +42,7 @@ class SuperAdminBoutiqueController extends Controller
         $q = Boutique::withCount(['users', 'produits'])->orderBy('created_at', 'desc');
         if ($request->filled('statut')) $q->where('statut', $request->statut);
         if ($request->filled('search')) $q->where('nom', 'like', '%' . $request->search . '%');
+        if ($request->filled('typeCommerce')) $q->where('type_commerce', $request->typeCommerce);
 
         $boutiques = $q->get()->map(function (Boutique $b) {
             $abonnement = $b->abonnementActif();
@@ -75,6 +76,7 @@ class SuperAdminBoutiqueController extends Controller
     {
         $data = $request->validate([
             'nom'            => 'required|string|max:150',
+            'typeCommerce'   => 'sometimes|in:' . implode(',', Boutique::TYPES_COMMERCE),
             'adresse'        => 'sometimes|nullable|string',
             'ville'          => 'sometimes|nullable|string',
             'whatsapp'       => 'sometimes|nullable|string',
@@ -93,6 +95,7 @@ class SuperAdminBoutiqueController extends Controller
             $boutique = Boutique::create([
                 'nom'       => $data['nom'],
                 'slug'      => $this->uniqueSlug($data['nom']),
+                'type_commerce' => $data['typeCommerce'] ?? 'VETEMENTS',
                 'adresse'   => $data['adresse'] ?? null,
                 'ville'     => $data['ville'] ?? null,
                 'whatsapp'  => $data['whatsapp'] ?? null,
@@ -108,6 +111,8 @@ class SuperAdminBoutiqueController extends Controller
                 'role'          => 'ADMIN',
                 'boutique_id'   => $boutique->id,
             ]);
+
+            app(\App\Services\CategoriesDeDepart::class)->creer($boutique);
 
             $abonnement = Abonnement::create([
                 'boutique_id' => $boutique->id,
@@ -145,13 +150,24 @@ class SuperAdminBoutiqueController extends Controller
             'email'     => 'sometimes|nullable|email',
             'telephone' => 'sometimes|nullable|string',
             'logoUrl'   => 'sometimes|nullable|string',
+            // Réservé au Super Admin : l'admin d'une boutique ne peut pas changer son type (BoutiqueController::updateMe).
+            'typeCommerce' => 'sometimes|in:' . implode(',', Boutique::TYPES_COMMERCE),
         ]);
         if (array_key_exists('logoUrl', $data)) {
             $data['logo_url'] = $data['logoUrl'];
             unset($data['logoUrl']);
         }
+        $ancienType = $b->type_commerce;
+        if (array_key_exists('typeCommerce', $data)) {
+            $data['type_commerce'] = $data['typeCommerce'];
+            unset($data['typeCommerce']);
+        }
 
         $b->update($data);
+
+        if (isset($data['type_commerce']) && $data['type_commerce'] !== $ancienType) {
+            AuditLog::record($request->user()->id, 'BOUTIQUE_TYPE_COMMERCE', 'Boutique', $b->id, "Type de commerce de {$b->nom} : {$ancienType} → {$data['type_commerce']}");
+        }
         return $this->success($b->fresh());
     }
 

@@ -2,14 +2,19 @@
 
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\BalleController;
 use App\Http\Controllers\BoutiqueController;
 use App\Http\Controllers\CategorieController;
+use App\Http\Controllers\ClientController;
 use App\Http\Controllers\CaisseController;
+use App\Http\Controllers\DemarqueController;
+use App\Http\Controllers\DevisController;
 use App\Http\Controllers\EntreeController;
 use App\Http\Controllers\FournisseurController;
 use App\Http\Controllers\LookbookPhotoController;
 use App\Http\Controllers\ProduitController;
 use App\Http\Controllers\RapportController;
+use App\Http\Controllers\RecetteController;
 use App\Http\Controllers\SortieController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\SuperAdminAbonnementController;
@@ -80,6 +85,32 @@ Route::prefix('v1')->group(function () {
             Route::delete('produits/{id}/images/{imageId}',[ProduitController::class, 'removeImage']);
             Route::get('produits/{id}/mouvements',         [ProduitController::class, 'mouvements']);
 
+            // Restaurant : fiche technique d'un plat (lecture ; écriture réservée à l'ADMIN plus bas)
+            Route::get('produits/{id}/recette',            [RecetteController::class, 'show']);
+
+            // Quincaillerie : devis / factures proforma
+            Route::get('devis',                    [DevisController::class, 'index']);
+            Route::get('devis/{id}',               [DevisController::class, 'show']);
+            Route::post('devis',                   [DevisController::class, 'store']);
+            Route::patch('devis/{id}/statut',      [DevisController::class, 'changerStatut']);
+            Route::post('devis/{id}/convertir',    [DevisController::class, 'convertir']);
+
+            // Friperie : balles et déballage (suppression d'une balle vide réservée à l'ADMIN plus bas)
+            Route::get('balles',                              [BalleController::class, 'index']);
+            Route::get('balles/{id}',                         [BalleController::class, 'show']);
+            Route::post('balles',                             [BalleController::class, 'store']);
+            Route::patch('balles/{id}',                       [BalleController::class, 'update']);
+            Route::patch('balles/{id}/statut',                [BalleController::class, 'changerStatut']);
+            Route::post('balles/{id}/pieces',                 [BalleController::class, 'ajouterPieces']);
+            Route::delete('balles/{id}/pieces/{produitId}',   [BalleController::class, 'retirerPiece']);
+            Route::get('demarques',                           [DemarqueController::class, 'index']);
+
+            // Quincaillerie : clients à crédit (fiche, relevé, règlements ; plafond et suppression réservés à l'ADMIN)
+            Route::get('clients',                  [ClientController::class, 'index']);
+            Route::get('clients/{id}',             [ClientController::class, 'show']);
+            Route::post('clients',                 [ClientController::class, 'store']);
+            Route::post('clients/{id}/reglements', [ClientController::class, 'regler']);
+
             // Variantes
             Route::patch('variantes/{id}',       [VarianteController::class, 'update']);
             Route::delete('variantes/{id}',      [VarianteController::class, 'destroy']);
@@ -143,6 +174,13 @@ Route::prefix('v1')->group(function () {
                 Route::delete('fournisseurs/{id}', [FournisseurController::class, 'destroy']);
 
                 // Catégories (écriture admin)
+                Route::put('produits/{id}/recette', [RecetteController::class, 'update']);
+                Route::delete('balles/{id}', [BalleController::class, 'destroy']);
+                // Friperie : baisser les prix est une décision de l'ADMIN.
+                Route::post('demarques', [DemarqueController::class, 'appliquer']);
+                Route::patch('clients/{id}',  [ClientController::class, 'update']);
+                Route::delete('clients/{id}', [ClientController::class, 'destroy']);
+
                 Route::post('categories',        [CategorieController::class, 'store']);
                 Route::patch('categories/{id}',  [CategorieController::class, 'update']);
                 Route::delete('categories/{id}', [CategorieController::class, 'destroy']);

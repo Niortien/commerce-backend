@@ -15,6 +15,8 @@ class Variante extends Model
     public $incrementing = false;
 
     protected $fillable = ['produit_id', 'boutique_id', 'taille', 'couleur', 'quantite_stock', 'seuil_alerte'];
+    // Quantités décimales (12,5 m, 0,250 kg) renvoyées en nombres JSON.
+    protected $casts = ['quantite_stock' => 'float', 'seuil_alerte' => 'float'];
 
     protected static function boot(): void
     {

@@ -26,6 +26,7 @@ trait ApiResponse
                 'pageCount' => (int) ceil($total / $limit),
             ],
             'timestamp' => now()->toISOString(),
-        ])->header('Cache-Control', 'private, max-age=60, must-revalidate');
+        // Pas de cache navigateur : une liste relue juste après une modification doit être à jour.
+        ])->header('Cache-Control', 'no-store');
     }
 }

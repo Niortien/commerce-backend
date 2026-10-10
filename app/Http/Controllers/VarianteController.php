@@ -31,7 +31,7 @@ class VarianteController extends Controller
         $data = $request->validate([
             'taille'      => 'sometimes|string',
             'couleur'     => 'sometimes|string',
-            'seuilAlerte' => 'sometimes|integer|min:0',
+            'seuilAlerte' => 'sometimes|numeric|min:0',
         ]);
 
         $map = ['taille' => 'taille', 'couleur' => 'couleur', 'seuilAlerte' => 'seuil_alerte'];
@@ -79,11 +79,11 @@ class VarianteController extends Controller
         $variante = $this->findOwned($request, $id);
 
         $data = $request->validate([
-            'variation' => 'required|integer',
+            'variation' => 'required|numeric',
             'motif'     => 'sometimes|nullable|string',
         ]);
 
-        $variation = (int) $data['variation'];
+        $variation = (float) $data['variation'];
         $type      = $variation >= 0 ? 'AJUSTEMENT' : 'SORTIE';
         $quantite  = abs($variation);
 

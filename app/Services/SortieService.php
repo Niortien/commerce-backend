@@ -1,0 +1,139 @@
+<?php
+
+namespace App\Services;
+
+use App\Exceptions\ConflictException;
+use App\Exceptions\NotFoundException;
+use App\Exceptions\ValidationException;
+use App\Models\CaisseSession;
+use App\Models\MouvementStock;
+use App\Models\Sortie;
+use App\Models\Variante;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
+
+/**
+ * Création et annulation des sorties de stock (ventes, pertes, dons, retours).
+ * Partagé par la caisse (SortieController) et la conversion d'un devis en vente (DevisController).
+ *
+ * Restaurant : vendre un PLAT ne touche pas au stock du plat (préparé à la commande) mais retire de
+ * chaque ingrédient la quantité de sa fiche technique × le nombre de portions.
+ */
+class SortieService
+{
+    public const MODES_SERVICE = ['SUR_PLACE', 'A_EMPORTER', 'LIVRAISON'];
+
+    public function __construct(private StockMovementService $movements, private CreditService $credits) {}
+
+    /**
+     * @param array<int, array{varianteId: string, quantite: int|float|string, prixUnitaire: int|float|string}> $lignes
+     * @param array{remiseMontant?: int|float|string|null, notes?: string|null, modeService?: string|null, tableLabel?: string|null, credit?: array{clientId: string, echeanceJours?: int|null, acompteMontant?: int|float|string|null, acompteMode?: string|null}|null} $options
+     *        credit : vente à crédit inscrite au compte du client (VENTE seulement).
+     */
+    public function creer(string $boutiqueId, string $userId, string $type, array $lignes, array $options = []): Sortie
+    {
+        $variantes = Variante::with('produit.recette')
+            ->where('boutique_id', $boutiqueId)
+            ->whereIn('id', array_column($lignes, 'varianteId'))
+            ->get()
+            ->keyBy('id');
+
+        foreach ($lignes as $l) {
+            $variante = $variantes->get($l['varianteId']);
+            if (!$variante || !$variante->produit) {
+                throw new NotFoundException('Variante introuvable', 'VARIANTE_NOT_FOUND');
+            }
+            $produit = $variante->produit;
+            if ($produit->seVendALUnite() && floor((float) $l['quantite']) != (float) $l['quantite']) {
+                throw new ValidationException("« {$produit->nom} » se vend à l'unité : la quantité doit être un nombre entier", 'QUANTITE_ENTIERE');
+            }
+            if ($produit->piece_unique && (float) $l['quantite'] != 1.0) {
+                throw new ValidationException("« {$produit->nom} » est une pièce unique : une seule à la fois", 'PIECE_UNIQUE_QUANTITE');
+            }
+            if ($type === 'VENTE' && $produit->nature === 'INGREDIENT') {
+                throw new ValidationException("« {$produit->nom} » est un ingrédient : il ne se vend pas seul", 'INGREDIENT_NON_VENDABLE');
+            }
+        }
+
+        if ($type === 'VENTE') {
+            $session = CaisseSession::where('statut', 'OUVERTE')->where('boutique_id', $boutiqueId)->first();
+            if (!$session) {
+                throw new ConflictException('Aucune session de caisse ouverte', 'NO_ACTIVE_SESSION');
+            }
+        }
+
+        $totalAvant = '0.00';
+        foreach ($lignes as $l) {
+            $totalAvant = bcadd($totalAvant, bcmul((string) $l['prixUnitaire'], (string) $l['quantite'], 2), 2);
+        }
+        $remise = (string) ($options['remiseMontant'] ?? '0');
+        $totalMontant = bcsub($totalAvant, $remise, 2);
+        if (bccomp($totalMontant, '0', 2) < 0) {
+            throw new ValidationException('La remise dépasse le total', 'REMISE_INVALIDE');
+        }
+
+        $reference = 'SRT-' . strtoupper(Str::random(8));
+
+        return DB::transaction(function () use ($boutiqueId, $userId, $type, $lignes, $options, $variantes, $reference, $totalAvant, $remise, $totalMontant) {
+            $sortie = Sortie::create([
+                'reference'          => $reference,
+                'type'               => $type,
+                'mode_service'       => $type === 'VENTE' ? ($options['modeService'] ?? null) : null,
+                'table_label'        => $type === 'VENTE' ? ($options['tableLabel'] ?? null) : null,
+                'total_avant_remise' => $totalAvant,
+                'remise_montant'     => $remise,
+                'total_montant'      => $totalMontant,
+                'notes'              => $options['notes'] ?? null,
+                'user_id'            => $userId,
+                'boutique_id'        => $boutiqueId,
+            ]);
+
+            foreach ($lignes as $ligne) {
+                $sortie->lignes()->create([
+                    'variante_id'   => $ligne['varianteId'],
+                    'quantite'      => $ligne['quantite'],
+                    'prix_unitaire' => $ligne['prixUnitaire'],
+                ]);
+
+                $produit = $variantes->get($ligne['varianteId'])->produit;
+                if ($produit->nature === 'PLAT') {
+                    // Le plat est préparé à la commande : on retire ses ingrédients, pas le plat lui-même.
+                    foreach ($produit->recette as $r) {
+                        $quantite = bcmul(number_format($r->quantite, 3, '.', ''), (string) $ligne['quantite'], 3);
+                        $this->movements->create($r->ingredient_variante_id, 'SORTIE', $quantite, $userId, "Plat : {$produit->nom} × {$ligne['quantite']}", null, $reference);
+                    }
+                } else {
+                    $this->movements->create($ligne['varianteId'], 'SORTIE', $ligne['quantite'], $userId, null, null, $reference);
+                }
+            }
+
+            if ($type === 'VENTE' && !empty($options['credit']['clientId'])) {
+                $this->credits->vendreACredit($sortie, $options['credit'], $userId);
+            }
+
+            return $sortie;
+        });
+    }
+
+    /**
+     * Remet en stock ce que la sortie a retiré. On rejoue ses mouvements (et non ses lignes) :
+     * pour un plat, ce sont ses ingrédients qui reviennent en stock.
+     */
+    public function remettreEnStock(Sortie $sortie, string $userId): void
+    {
+        $mouvements = MouvementStock::where('reference_sortie', $sortie->reference)->where('type', 'SORTIE')->get();
+        $motif = 'Annulation sortie ' . $sortie->reference;
+
+        if ($mouvements->isEmpty()) {
+            // Sorties anciennes sans mouvement référencé : on se fie aux lignes.
+            foreach ($sortie->lignes as $ligne) {
+                $this->movements->create($ligne->variante_id, 'RETOUR', $ligne->quantite, $userId, $motif);
+            }
+            return;
+        }
+
+        foreach ($mouvements as $m) {
+            $this->movements->create($m->variante_id, 'RETOUR', $m->quantite, $userId, $motif);
+        }
+    }
+}
