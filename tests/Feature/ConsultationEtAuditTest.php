@@ -154,4 +154,44 @@ class ConsultationEtAuditTest extends TestCase
         $this->getJson('/api/v1/audit-logs')->assertStatus(200)->assertJsonCount(1, 'data')->assertJsonPath('data.0.action', 'SORTIE_ANNULER');
         $this->assertInstanceOf(Boutique::class, $admin->boutique);
     }
+
+    // ──────────────────── Revenus par secteur ────────────────────
+
+    public function test_les_revenus_se_repartissent_par_secteur(): void
+    {
+        $quinca = User::factory()->admin()->create();
+        $quinca->boutique->update(['type_commerce' => 'QUINCAILLERIE']);
+        $resto = User::factory()->admin()->create();
+        $resto->boutique->update(['type_commerce' => 'RESTAURANT']);
+
+        // La fabrique donne un abonnement à chaque boutique : on repart de zéro pour maîtriser les montants.
+        \App\Models\Abonnement::query()->delete();
+        $debut = now()->startOfMonth()->addDay();
+        \App\Models\Abonnement::create(['boutique_id' => $quinca->boutique_id, 'plan' => 'ANNUEL', 'statut' => 'ACTIF', 'date_debut' => $debut, 'date_fin' => $debut->copy()->addYear()]);
+        \App\Models\Abonnement::create(['boutique_id' => $resto->boutique_id, 'plan' => 'MENSUEL', 'statut' => 'ACTIF', 'date_debut' => $debut, 'date_fin' => $debut->copy()->addMonth(), 'montant' => 8000]);
+        \App\Models\Abonnement::create(['boutique_id' => $resto->boutique_id, 'plan' => 'ESSAI', 'statut' => 'ACTIF', 'date_debut' => $debut, 'date_fin' => $debut->copy()->addDays(14)]);
+        \App\Models\Abonnement::create(['boutique_id' => $resto->boutique_id, 'plan' => 'MENSUEL', 'statut' => 'ANNULE', 'date_debut' => $debut, 'date_fin' => $debut->copy()->addMonth()]);
+
+        $this->actingAsSuperAdmin();
+        $res = $this->getJson('/api/v1/super-admin/revenus?annee=' . now()->year)->assertStatus(200);
+
+        // Annuel sans montant saisi : tarif 96 000 ; mensuel saisi 8 000 ; essai et annulé ne comptent pas.
+        $this->assertEquals(104000, $res->json('data.totalAnnee'));
+        $secteurs = collect($res->json('data.parSecteur'))->keyBy('typeCommerce');
+        $this->assertEquals(96000, $secteurs['QUINCAILLERIE']['revenusAnnee']);
+        $this->assertEquals(8000, $secteurs['RESTAURANT']['revenusAnnee']);
+        $this->assertEquals(8000, $secteurs['QUINCAILLERIE']['revenuMensuelRecurrent']);
+        $this->assertSame(1, $secteurs['RESTAURANT']['nbAbonnementsPayes']);
+        $this->assertCount(12, $res->json('data.parMois'));
+
+        $mois = collect($res->json('data.parMois'))->firstWhere('mois', now()->format('Y-m'));
+        $this->assertEquals(104000, $mois['total']);
+        $this->assertCount(2, $mois['parSecteur']);
+    }
+
+    public function test_seul_le_super_admin_voit_les_revenus(): void
+    {
+        $this->actingAsAdmin();
+        $this->getJson('/api/v1/super-admin/revenus')->assertStatus(403);
+    }
 }

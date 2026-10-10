@@ -38,7 +38,8 @@ class DemarqueController extends Controller
 
         $q = Produit::with(['categorie', 'variantes', 'balle:id,numero,libelle'])
             ->where('boutique_id', $this->tenantBoutiqueId($request))
-            ->where('piece_unique', true)
+            // Pièces uniques et tas des balles (friperie).
+            ->where(fn($w) => $w->where('piece_unique', true)->orWhereNotNull('balle_id'))
             ->where('is_actif', true)
             ->whereHas('variantes', fn($v) => $v->where('quantite_stock', '>', 0))
             ->whereRaw('COALESCE(derniere_demarque_at, created_at) <= ?', [$limite])

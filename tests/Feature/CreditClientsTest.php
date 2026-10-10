@@ -21,6 +21,8 @@ class CreditClientsTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected ?string $typeCommerce = 'QUINCAILLERIE';
+
     private function ouvrirCaisse(User $user): void
     {
         CaisseSession::create([

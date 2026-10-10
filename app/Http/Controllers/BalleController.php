@@ -200,6 +200,8 @@ class BalleController extends Controller
             'pieces.*.prixVente'   => 'required|numeric|min:0',
             'pieces.*.description' => 'sometimes|nullable|string',
             'pieces.*.choix'       => 'sometimes|nullable|integer|in:' . implode(',', Produit::CHOIX),
+            // Tas à prix unique : plusieurs articles semblables vendus au même prix (« tout à 500 F »).
+            'pieces.*.quantite'    => 'sometimes|integer|min:1|max:1000',
         ]);
 
         if ($balle->statut === 'TERMINEE') {
@@ -224,6 +226,7 @@ class BalleController extends Controller
                     throw new NotFoundException('Rayon introuvable', 'CATEGORIE_NOT_FOUND');
                 }
                 $numero++;
+                $quantite = (int) ($piece['quantite'] ?? 1);
 
                 $produit = Produit::create([
                     'boutique_id'  => $boutiqueId,
@@ -237,7 +240,7 @@ class BalleController extends Controller
                     'nature'       => 'ARTICLE',
                     'balle_id'     => $balle->id,
                     'numero_piece' => $numero,
-                    'piece_unique' => true,
+                    'piece_unique' => $quantite === 1,
                     'choix'        => $piece['choix'] ?? null,
                 ]);
                 $variante = Variante::create([
@@ -250,9 +253,9 @@ class BalleController extends Controller
                 ]);
 
                 if ($entree) {
-                    $entree->lignes()->create(['variante_id' => $variante->id, 'quantite' => 1, 'prix_unitaire' => 0]);
+                    $entree->lignes()->create(['variante_id' => $variante->id, 'quantite' => $quantite, 'prix_unitaire' => 0]);
                 }
-                $this->movements->create($variante->id, 'ENTREE', 1, $userId, "Déballage balle n°{$balle->numero}", $entree?->reference);
+                $this->movements->create($variante->id, 'ENTREE', $quantite, $userId, "Déballage balle n°{$balle->numero}", $entree?->reference);
                 $ids[] = $produit->id;
             }
 
@@ -314,9 +317,11 @@ class BalleController extends Controller
     {
         $pieces = DB::table('produits as p')
             ->join('variantes as v', 'v.produit_id', '=', 'p.id')
+            ->leftJoin('ligne_entrees as le', fn($j) => $j->on('le.variante_id', '=', 'v.id')->where('le.entree_id', '=', $balle->entree_id))
             ->where('p.balle_id', $balle->id)
             ->groupBy('p.choix')
-            ->selectRaw('p.choix, COUNT(DISTINCT p.id) as nb_pieces, COUNT(DISTINCT CASE WHEN v.quantite_stock > 0 THEN p.id END) as nb_en_rayon')
+            ->selectRaw('p.choix, COALESCE(SUM(COALESCE(le.quantite, 1)), 0) as nb_pieces,
+                COALESCE(SUM(v.quantite_stock), 0) as nb_en_rayon')
             ->get()
             ->keyBy(fn($r) => (string) $r->choix);
 
@@ -345,7 +350,7 @@ class BalleController extends Controller
     /** Coût de la balle ÷ nombre de pièces, sur chaque pièce et chaque ligne de l'entrée. */
     private function repartirCout(Balle $balle): void
     {
-        $nb = Produit::where('balle_id', $balle->id)->count();
+        $nb = $this->nbArticles($balle);
         if ($nb === 0) return;
 
         $part = bcdiv($balle->coutTotal(), (string) $nb, 2);
@@ -355,6 +360,16 @@ class BalleController extends Controller
             $variantes = Variante::whereIn('produit_id', Produit::where('balle_id', $balle->id)->select('id'))->select('id');
             LigneEntree::where('entree_id', $balle->entree_id)->whereIn('variante_id', $variantes)->update(['prix_unitaire' => $part]);
         }
+    }
+
+    /** Articles sortis de la balle : 1 par pièce unique, N par tas (quantité mise en rayon au déballage). */
+    private function nbArticles(Balle $balle): int
+    {
+        return (int) DB::table('produits as p')
+            ->join('variantes as v', 'v.produit_id', '=', 'p.id')
+            ->leftJoin('ligne_entrees as le', fn($j) => $j->on('le.variante_id', '=', 'v.id')->where('le.entree_id', '=', $balle->entree_id))
+            ->where('p.balle_id', $balle->id)
+            ->sum(DB::raw('COALESCE(le.quantite, 1)'));
     }
 
     /** B7-014 ; suffixé si ce code est déjà pris par un autre article de la boutique. */
@@ -383,11 +398,14 @@ class BalleController extends Controller
 
         $pieces = $ids === [] ? collect() : DB::table('produits as p')
             ->join('variantes as v', 'v.produit_id', '=', 'p.id')
+            ->join('balles as b', 'b.id', '=', 'p.balle_id')
+            ->leftJoin('ligne_entrees as le', fn($j) => $j->on('le.variante_id', '=', 'v.id')->whereColumn('le.entree_id', 'b.entree_id'))
             ->whereIn('p.balle_id', $ids)
             ->groupBy('p.balle_id')
-            ->selectRaw('p.balle_id, COUNT(DISTINCT p.id) as nb_pieces,
-                COUNT(DISTINCT CASE WHEN v.quantite_stock > 0 THEN p.id END) as nb_en_rayon,
-                COALESCE(SUM(CASE WHEN v.quantite_stock > 0 THEN p.prix_vente ELSE 0 END), 0) as valeur_en_rayon')
+            ->selectRaw('p.balle_id, COALESCE(SUM(COALESCE(le.quantite, 1)), 0) as nb_pieces,
+                COALESCE(SUM(v.quantite_stock), 0) as nb_en_rayon,
+                COUNT(DISTINCT CASE WHEN p.piece_unique = 0 THEN p.id END) as nb_tas,
+                COALESCE(SUM(v.quantite_stock * p.prix_vente), 0) as valeur_en_rayon')
             ->get()
             ->keyBy('balle_id');
 
@@ -414,6 +432,7 @@ class BalleController extends Controller
             return array_merge($balle->toArray(), [
                 'cout_total'        => $cout,
                 'nb_pieces'         => $nbPieces,
+                'nb_tas'            => (int) ($p->nb_tas ?? 0),
                 'nb_en_rayon'       => $nbEnRayon,
                 'nb_vendues'        => $nbPieces - $nbEnRayon,
                 'cout_par_piece'    => $nbPieces > 0 ? bcdiv($cout, (string) $nbPieces, 2) : null,

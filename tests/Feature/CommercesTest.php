@@ -44,6 +44,7 @@ class CommercesTest extends TestCase
     /** Garba poulet : 0,2 kg d'attiéké + 1 portion de poulet. */
     private function garba(User $admin): array
     {
+        $this->metier($admin, 'RESTAURANT');
         $attieke = $this->produit($admin, ['nom' => 'Attiéké', 'unite' => 'KG', 'nature' => 'INGREDIENT'], 5);
         $poulet  = $this->produit($admin, ['nom' => 'Poulet', 'unite' => 'PORTION', 'nature' => 'INGREDIENT'], 10);
         $plat    = $this->produit($admin, ['nom' => 'Garba poulet', 'nature' => 'PLAT', 'prix_vente' => 1500]);
@@ -164,7 +165,7 @@ class CommercesTest extends TestCase
 
     public function test_un_devis_ne_touche_pas_au_stock_puis_devient_une_vente(): void
     {
-        $admin = $this->actingAsAdmin();
+        $admin = $this->metier($this->actingAsAdmin(), 'QUINCAILLERIE');
         $ciment = $this->produit($admin, ['nom' => 'Ciment 50 kg', 'unite' => 'SAC'], 40);
 
         $devisId = $this->postJson('/api/v1/devis', [
@@ -208,5 +209,28 @@ class CommercesTest extends TestCase
         $boutiqueId = $response->json('data.boutique.id');
         $this->assertSame('RESTAURANT', $response->json('data.boutique.typeCommerce'));
         $this->assertTrue(Categorie::where('boutique_id', $boutiqueId)->where('nom', 'Grillades')->where('description', 'Menu')->exists());
+    }
+
+    // ──────────────────── Accès par métier ────────────────────
+
+    public function test_les_fonctions_d_un_autre_metier_sont_refusees_meme_par_url(): void
+    {
+        $admin = $this->metier($this->actingAsAdmin(), 'RESTAURANT');
+        $plat = $this->produit($admin, ['nom' => 'Garba', 'nature' => 'PLAT']);
+
+        foreach (['/api/v1/devis', '/api/v1/clients', '/api/v1/balles', '/api/v1/demarques'] as $url) {
+            $this->getJson($url)->assertStatus(403)->assertJsonPath('error.code', 'FONCTION_AUTRE_METIER');
+        }
+        $this->postJson('/api/v1/balles', ['libelle' => 'X', 'coutAchat' => 1000])->assertStatus(403);
+        $this->getJson("/api/v1/produits/{$plat->produit_id}/recette")->assertStatus(200);
+    }
+
+    public function test_une_boutique_de_vetements_n_a_pas_de_fiche_technique(): void
+    {
+        $admin = $this->metier($this->actingAsAdmin(), 'VETEMENTS');
+        $produit = $this->produit($admin, ['nom' => 'Robe']);
+
+        $this->getJson("/api/v1/produits/{$produit->produit_id}/recette")
+            ->assertStatus(403)->assertJsonPath('error.code', 'FONCTION_AUTRE_METIER');
     }
 }

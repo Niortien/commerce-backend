@@ -10,9 +10,24 @@ abstract class TestCase extends BaseTestCase
 {
     use CreatesApplication;
 
+    /** Type de commerce donné aux boutiques des comptes de test (null : celui de la fabrique). */
+    protected ?string $typeCommerce = null;
+
+    /** Donne un type de commerce à la boutique du compte (les fonctions métier en dépendent). */
+    protected function metier(User $user, string $type): User
+    {
+        $user->boutique?->update(['type_commerce' => $type]);
+        return $user;
+    }
+
+    private function avecMetier(User $user): User
+    {
+        return $this->typeCommerce ? $this->metier($user, $this->typeCommerce) : $user;
+    }
+
     protected function actingAsAdmin(?User $user = null): User
     {
-        $user ??= User::factory()->admin()->create();
+        $user ??= $this->avecMetier(User::factory()->admin()->create());
         $token = JWTAuth::fromUser($user);
         $this->withToken($token);
         return $user;
@@ -25,7 +40,7 @@ abstract class TestCase extends BaseTestCase
 
     protected function actingAsCaissier(?User $user = null): User
     {
-        $user ??= User::factory()->caissier()->create();
+        $user ??= $this->avecMetier(User::factory()->caissier()->create());
         $token = JWTAuth::fromUser($user);
         $this->withToken($token);
         return $user;

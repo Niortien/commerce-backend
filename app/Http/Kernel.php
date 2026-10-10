@@ -68,5 +68,6 @@ class Kernel extends HttpKernel
         'role'     => \App\Http\Middleware\RoleMiddleware::class,
         'boutique.active' => \App\Http\Middleware\EnsureBoutiqueActive::class,
         'consultation'    => \App\Http\Middleware\ConsultationLectureSeule::class,
+        'metier'          => \App\Http\Middleware\EnsureMetier::class,
     ];
 }

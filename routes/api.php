@@ -21,6 +21,7 @@ use App\Http\Controllers\SortieController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\SuperAdminAbonnementController;
 use App\Http\Controllers\SuperAdminBoutiqueController;
+use App\Http\Controllers\SuperAdminRevenuController;
 use App\Http\Controllers\SuperAdminUserController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VarianteController;
@@ -72,6 +73,7 @@ Route::prefix('v1')->group(function () {
 
             Route::get('audit-logs',           [AuditLogController::class, 'index']);
             Route::get('audit-logs/actions',   [AuditLogController::class, 'actions']);
+            Route::get('revenus',              [SuperAdminRevenuController::class, 'index']);
 
             // Ouvrir l'espace d'un admin ou d'un caissier, en lecture seule
             Route::post('users/{id}/consulter',     [ConsultationController::class, 'utilisateur']);
@@ -103,30 +105,32 @@ Route::prefix('v1')->group(function () {
             Route::get('produits/{id}/mouvements',         [ProduitController::class, 'mouvements']);
 
             // Restaurant : fiche technique d'un plat (lecture ; écriture réservée à l'ADMIN plus bas)
-            Route::get('produits/{id}/recette',            [RecetteController::class, 'show']);
+            Route::get('produits/{id}/recette',            [RecetteController::class, 'show'])->middleware('metier:RESTAURANT');
+
+            // Fonctions réservées à un métier (middleware metier) : refusées aux autres types de commerce, même par URL directe.
 
             // Quincaillerie : devis / factures proforma
-            Route::get('devis',                    [DevisController::class, 'index']);
-            Route::get('devis/{id}',               [DevisController::class, 'show']);
-            Route::post('devis',                   [DevisController::class, 'store']);
-            Route::patch('devis/{id}/statut',      [DevisController::class, 'changerStatut']);
-            Route::post('devis/{id}/convertir',    [DevisController::class, 'convertir']);
+            Route::get('devis',                    [DevisController::class, 'index'])->middleware('metier:QUINCAILLERIE');
+            Route::get('devis/{id}',               [DevisController::class, 'show'])->middleware('metier:QUINCAILLERIE');
+            Route::post('devis',                   [DevisController::class, 'store'])->middleware('metier:QUINCAILLERIE');
+            Route::patch('devis/{id}/statut',      [DevisController::class, 'changerStatut'])->middleware('metier:QUINCAILLERIE');
+            Route::post('devis/{id}/convertir',    [DevisController::class, 'convertir'])->middleware('metier:QUINCAILLERIE');
 
             // Friperie : balles et déballage (suppression d'une balle vide réservée à l'ADMIN plus bas)
-            Route::get('balles',                              [BalleController::class, 'index']);
-            Route::get('balles/{id}',                         [BalleController::class, 'show']);
-            Route::post('balles',                             [BalleController::class, 'store']);
-            Route::patch('balles/{id}',                       [BalleController::class, 'update']);
-            Route::patch('balles/{id}/statut',                [BalleController::class, 'changerStatut']);
-            Route::post('balles/{id}/pieces',                 [BalleController::class, 'ajouterPieces']);
-            Route::delete('balles/{id}/pieces/{produitId}',   [BalleController::class, 'retirerPiece']);
-            Route::get('demarques',                           [DemarqueController::class, 'index']);
+            Route::get('balles',                              [BalleController::class, 'index'])->middleware('metier:FRIPERIE');
+            Route::get('balles/{id}',                         [BalleController::class, 'show'])->middleware('metier:FRIPERIE');
+            Route::post('balles',                             [BalleController::class, 'store'])->middleware('metier:FRIPERIE');
+            Route::patch('balles/{id}',                       [BalleController::class, 'update'])->middleware('metier:FRIPERIE');
+            Route::patch('balles/{id}/statut',                [BalleController::class, 'changerStatut'])->middleware('metier:FRIPERIE');
+            Route::post('balles/{id}/pieces',                 [BalleController::class, 'ajouterPieces'])->middleware('metier:FRIPERIE');
+            Route::delete('balles/{id}/pieces/{produitId}',   [BalleController::class, 'retirerPiece'])->middleware('metier:FRIPERIE');
+            Route::get('demarques',                           [DemarqueController::class, 'index'])->middleware('metier:FRIPERIE');
 
             // Quincaillerie : clients à crédit (fiche, relevé, règlements ; plafond et suppression réservés à l'ADMIN)
-            Route::get('clients',                  [ClientController::class, 'index']);
-            Route::get('clients/{id}',             [ClientController::class, 'show']);
-            Route::post('clients',                 [ClientController::class, 'store']);
-            Route::post('clients/{id}/reglements', [ClientController::class, 'regler']);
+            Route::get('clients',                  [ClientController::class, 'index'])->middleware('metier:QUINCAILLERIE');
+            Route::get('clients/{id}',             [ClientController::class, 'show'])->middleware('metier:QUINCAILLERIE');
+            Route::post('clients',                 [ClientController::class, 'store'])->middleware('metier:QUINCAILLERIE');
+            Route::post('clients/{id}/reglements', [ClientController::class, 'regler'])->middleware('metier:QUINCAILLERIE');
 
             // Variantes
             Route::patch('variantes/{id}',       [VarianteController::class, 'update']);
@@ -191,12 +195,12 @@ Route::prefix('v1')->group(function () {
                 Route::delete('fournisseurs/{id}', [FournisseurController::class, 'destroy']);
 
                 // Catégories (écriture admin)
-                Route::put('produits/{id}/recette', [RecetteController::class, 'update']);
-                Route::delete('balles/{id}', [BalleController::class, 'destroy']);
+                Route::put('produits/{id}/recette', [RecetteController::class, 'update'])->middleware('metier:RESTAURANT');
+                Route::delete('balles/{id}', [BalleController::class, 'destroy'])->middleware('metier:FRIPERIE');
                 // Friperie : baisser les prix est une décision de l'ADMIN.
-                Route::post('demarques', [DemarqueController::class, 'appliquer']);
-                Route::patch('clients/{id}',  [ClientController::class, 'update']);
-                Route::delete('clients/{id}', [ClientController::class, 'destroy']);
+                Route::post('demarques', [DemarqueController::class, 'appliquer'])->middleware('metier:FRIPERIE');
+                Route::patch('clients/{id}',  [ClientController::class, 'update'])->middleware('metier:QUINCAILLERIE');
+                Route::delete('clients/{id}', [ClientController::class, 'destroy'])->middleware('metier:QUINCAILLERIE');
 
                 Route::post('categories',        [CategorieController::class, 'store']);
                 Route::patch('categories/{id}',  [CategorieController::class, 'update']);

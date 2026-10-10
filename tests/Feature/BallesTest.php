@@ -20,6 +20,8 @@ class BallesTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected ?string $typeCommerce = 'FRIPERIE';
+
     private function ouvrirCaisse(User $user): void
     {
         CaisseSession::create([
@@ -373,5 +375,56 @@ class BallesTest extends TestCase
         $this->postJson('/api/v1/demarques', ['produitIds' => [$etrangere->id], 'mode' => 'POURCENTAGE', 'valeur' => 50])
             ->assertStatus(200)->assertJsonPath('data.nbDemarquees', 0);
         $this->assertSame('2000.00', (string) $etrangere->fresh()->prix_vente);
+    }
+
+    // ──────────────────── Tas à prix unique ────────────────────
+
+    public function test_un_tas_compte_pour_tous_ses_articles_dans_le_cout_et_le_bilan(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $this->ouvrirCaisse($admin);
+        $id = $this->balle(['coutAchat' => 60000, 'frais' => 0]);
+        $rayon = Categorie::factory()->create(['boutique_id' => $admin->boutique_id]);
+
+        $pieces = $this->postJson("/api/v1/balles/{$id}/pieces", ['pieces' => [
+            ['nom' => 'Veste', 'categorieId' => $rayon->id, 'prixVente' => 5000],
+            ['nom' => 'Robe', 'categorieId' => $rayon->id, 'prixVente' => 4000],
+            ['nom' => 'Tas tee-shirts', 'categorieId' => $rayon->id, 'prixVente' => 500, 'quantite' => 10],
+        ]])->assertStatus(201)->json('data');
+
+        $tas = $pieces[2];
+        $this->assertFalse($tas['pieceUnique']);
+        $this->assertEqualsWithDelta(10, $tas['variantes'][0]['quantiteStock'], 0.001);
+
+        // 12 articles : 60 000 / 12 = 5 000 par article, tas compris.
+        $this->assertSame(['5000.00'], Produit::where('balle_id', $id)->pluck('prix_achat')->map(fn($v) => (string) $v)->unique()->values()->all());
+
+        // Un tas se vend par plusieurs exemplaires.
+        $this->vendre($tas['variantes'][0]['id'], 3, 500)->assertStatus(201);
+
+        $this->getJson("/api/v1/balles/{$id}")
+            ->assertJsonPath('data.nbPieces', 12)
+            ->assertJsonPath('data.nbTas', 1)
+            ->assertJsonPath('data.nbEnRayon', 9)
+            ->assertJsonPath('data.nbVendues', 3)
+            ->assertJsonPath('data.coutParPiece', '5000.00')
+            ->assertJsonPath('data.recetteVentes', '1500.00')
+            ->assertJsonPath('data.valeurEnRayon', '12500.00');
+
+        // Un tas entamé ne se retire plus de la balle.
+        $this->deleteJson("/api/v1/balles/{$id}/pieces/{$tas['id']}")->assertStatus(409);
+    }
+
+    public function test_un_tas_qui_traine_se_demarque_aussi(): void
+    {
+        $admin = $this->actingAsAdmin();
+        $id = $this->balle();
+        $rayon = Categorie::factory()->create(['boutique_id' => $admin->boutique_id]);
+        $tas = $this->postJson("/api/v1/balles/{$id}/pieces", ['pieces' => [
+            ['nom' => 'Tas chaussettes', 'categorieId' => $rayon->id, 'prixVente' => 300, 'quantite' => 20],
+        ]])->json('data.0');
+        $this->vieillir([$tas], 40);
+
+        $this->getJson('/api/v1/demarques?joursMin=30')->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $tas['id']);
     }
 }
