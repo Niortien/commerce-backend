@@ -10,6 +10,14 @@ abstract class TestCase extends BaseTestCase
 {
     use CreatesApplication;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Les limites de tentatives (connexion, inscription) ne doivent pas se cumuler d'un test à l'autre :
+        // en CI le cache est sur fichier et survit entre les tests.
+        $this->app['cache']->store()->flush();
+    }
+
     /** Type de commerce donné aux boutiques des comptes de test (null : celui de la fabrique). */
     protected ?string $typeCommerce = null;
 
