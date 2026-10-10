@@ -133,6 +133,7 @@ Route::prefix('v1')->group(function () {
             Route::post('clients/{id}/reglements', [ClientController::class, 'regler'])->middleware('metier:QUINCAILLERIE');
 
             // Variantes
+            Route::get('variantes/code/{code}',  [VarianteController::class, 'parCode']);
             Route::patch('variantes/{id}',       [VarianteController::class, 'update']);
             Route::delete('variantes/{id}',      [VarianteController::class, 'destroy']);
 
@@ -156,6 +157,7 @@ Route::prefix('v1')->group(function () {
             Route::get('sorties',        [SortieController::class, 'index']);
             Route::get('sorties/{id}',   [SortieController::class, 'show']);
             Route::post('sorties',       [SortieController::class, 'store']);
+            Route::post('sorties/hors-ligne', [SortieController::class, 'storeHorsLigne']);
             Route::patch('sorties/{id}', [SortieController::class, 'update']);
 
             // Caisse
@@ -201,6 +203,9 @@ Route::prefix('v1')->group(function () {
                 Route::post('demarques', [DemarqueController::class, 'appliquer'])->middleware('metier:FRIPERIE');
                 Route::patch('clients/{id}',  [ClientController::class, 'update'])->middleware('metier:QUINCAILLERIE');
                 Route::delete('clients/{id}', [ClientController::class, 'destroy'])->middleware('metier:QUINCAILLERIE');
+
+                // Import d'un catalogue entier (crée produits, catégories et stock de départ)
+                Route::post('produits/import',   [ProduitController::class, 'import']);
 
                 Route::post('categories',        [CategorieController::class, 'store']);
                 Route::patch('categories/{id}',  [CategorieController::class, 'update']);

@@ -99,10 +99,17 @@ class SortieController extends Controller
             'echeanceJours'  => 'sometimes|nullable|integer|min:1|max:365',
             'acompteMontant' => 'sometimes|nullable|numeric|min:0',
             'acompteMode'    => 'sometimes|nullable|in:' . implode(',', CreditService::MODES_PAIEMENT),
+            // Référence créée par l'appareil : si la réponse se perd, la vente renvoyée plus tard n'est pas doublée.
+            'clientRef'      => 'sometimes|nullable|string|max:64',
         ]);
 
         $boutiqueId = $this->tenantBoutiqueId($request);
         $userId     = $request->user()->id;
+
+        if (!empty($data['clientRef'])) {
+            $deja = Sortie::where('boutique_id', $boutiqueId)->where('client_ref', $data['clientRef'])->first();
+            if ($deja) return $this->success($deja->load(['lignes.variante.produit', 'user', 'boutique', 'transaction']), 200);
+        }
 
         if ($data['type'] === 'DEPENSE') {
             $sortie = Sortie::create([
@@ -124,6 +131,7 @@ class SortieController extends Controller
             'notes'         => $data['notes'] ?? null,
             'modeService'   => $data['modeService'] ?? null,
             'tableLabel'    => $data['tableLabel'] ?? null,
+            'clientRef'     => $data['clientRef'] ?? null,
             'credit'        => empty($data['clientId']) ? null : [
                 'clientId'       => $data['clientId'],
                 'echeanceJours'  => $data['echeanceJours'] ?? null,
@@ -133,6 +141,34 @@ class SortieController extends Controller
         ]);
 
         return $this->success($sortie->load(['lignes.variante.produit', 'user', 'boutique', 'transaction']), 201);
+    }
+
+    /** Vente faite hors connexion, envoyée au retour du réseau (rejouable sans doublon). */
+    public function storeHorsLigne(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'clientRef'     => 'required|string|max:64',
+            'venduLe'       => 'required|date',
+            'modePaiement'  => 'required|in:' . implode(',', CreditService::MODES_PAIEMENT),
+            'montantPaye'   => 'sometimes|nullable|numeric|min:0',
+            'remiseMontant' => 'sometimes|nullable|numeric|min:0',
+            'notes'         => 'sometimes|nullable|string',
+            'modeService'   => 'sometimes|nullable|in:' . implode(',', SortieService::MODES_SERVICE),
+            'tableLabel'    => 'sometimes|nullable|string|max:30',
+            'lignes'        => 'required|array|min:1',
+            'lignes.*.varianteId'   => 'required|uuid',
+            'lignes.*.quantite'     => 'required|numeric|min:0.001',
+            'lignes.*.prixUnitaire' => 'required|numeric|min:0',
+        ]);
+
+        [$sortie, $creee] = $this->sorties->enregistrerHorsLigne(
+            $this->tenantBoutiqueId($request),
+            $request->user()->id,
+            $data['lignes'],
+            $data,
+        );
+
+        return $this->success($sortie->load(['lignes.variante.produit', 'user', 'transaction']), $creee ? 201 : 200);
     }
 
     public function update(Request $request, string $id): JsonResponse

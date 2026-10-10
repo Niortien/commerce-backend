@@ -122,6 +122,8 @@ class EntreeController extends Controller
 
                 if (!$varianteId && !empty($ligne['newProduit'])) {
                     $np = $ligne['newProduit'];
+                    $codeBarre = \App\Services\CodesBarres::normaliser(isset($np['codeBarre']) ? (string) $np['codeBarre'] : null);
+                    \App\Services\CodesBarres::verifierLibre($boutiqueId, $codeBarre);
                     if (!\App\Models\Categorie::where('id', $np['categorieId'])->where('boutique_id', $boutiqueId)->exists()) {
                         throw new NotFoundException('Categorie introuvable', 'CATEGORIE_NOT_FOUND');
                     }
@@ -141,6 +143,7 @@ class EntreeController extends Controller
                         'boutique_id'    => $boutiqueId,
                         'taille'         => $np['taille'],
                         'couleur'        => $np['couleur'],
+                        'code_barre'     => $codeBarre,
                         'quantite_stock' => 0,
                         'seuil_alerte'   => $np['seuilAlerte'] ?? 5,
                     ]);

@@ -8,7 +8,10 @@ use App\Exceptions\ValidationException;
 use App\Models\CaisseSession;
 use App\Models\MouvementStock;
 use App\Models\Sortie;
+use App\Models\Transaction;
 use App\Models\Variante;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -29,6 +32,7 @@ class SortieService
      * @param array<int, array{varianteId: string, quantite: int|float|string, prixUnitaire: int|float|string}> $lignes
      * @param array{remiseMontant?: int|float|string|null, notes?: string|null, modeService?: string|null, tableLabel?: string|null, credit?: array{clientId: string, echeanceJours?: int|null, acompteMontant?: int|float|string|null, acompteMode?: string|null}|null} $options
      *        credit : vente à crédit inscrite au compte du client (VENTE seulement).
+     *        session / clientRef / venduLe : vente faite hors connexion puis envoyée (voir enregistrerHorsLigne).
      */
     public function creer(string $boutiqueId, string $userId, string $type, array $lignes, array $options = []): Sortie
     {
@@ -55,7 +59,7 @@ class SortieService
             }
         }
 
-        if ($type === 'VENTE') {
+        if ($type === 'VENTE' && empty($options['session'])) {
             $session = CaisseSession::where('statut', 'OUVERTE')->where('boutique_id', $boutiqueId)->first();
             if (!$session) {
                 throw new ConflictException('Aucune session de caisse ouverte', 'NO_ACTIVE_SESSION');
@@ -84,9 +88,13 @@ class SortieService
                 'remise_montant'     => $remise,
                 'total_montant'      => $totalMontant,
                 'notes'              => $options['notes'] ?? null,
+                'client_ref'         => $options['clientRef'] ?? null,
                 'user_id'            => $userId,
                 'boutique_id'        => $boutiqueId,
             ]);
+            if (!empty($options['venduLe'])) {
+                $sortie->forceFill(['created_at' => $options['venduLe'], 'updated_at' => $options['venduLe']])->save();
+            }
 
             foreach ($lignes as $ligne) {
                 $sortie->lignes()->create([
@@ -113,6 +121,82 @@ class SortieService
 
             return $sortie;
         });
+    }
+
+    /**
+     * Vente faite sans internet, envoyée quand la connexion revient.
+     *
+     * L'appareil donne à chaque vente une référence (clientRef) : si elle arrive deux fois (réseau
+     * coupé pendant l'envoi), la seconde renvoie la première au lieu d'en créer une autre.
+     * La vente est rangée dans la session de caisse ouverte au moment où elle a eu lieu, sinon dans
+     * celle ouverte maintenant. Le paiement est enregistré avec elle, d'un seul bloc.
+     *
+     * @param array<int, array{varianteId: string, quantite: int|float|string, prixUnitaire: int|float|string}> $lignes
+     * @param array{clientRef: string, venduLe: string, modePaiement: string, montantPaye?: int|float|string|null, remiseMontant?: int|float|string|null, notes?: string|null, modeService?: string|null, tableLabel?: string|null} $infos
+     * @return array{0: Sortie, 1: bool} la vente et « vient d'être créée »
+     */
+    public function enregistrerHorsLigne(string $boutiqueId, string $userId, array $lignes, array $infos): array
+    {
+        $existante = Sortie::with('transaction')->where('boutique_id', $boutiqueId)->where('client_ref', $infos['clientRef'])->first();
+        if ($existante) {
+            // La vente était arrivée mais pas son paiement (réponse perdue entre les deux) : on le complète.
+            if (!$existante->transaction && $existante->type === 'VENTE') {
+                $session = CaisseSession::where('boutique_id', $boutiqueId)->where('statut', 'OUVERTE')->orderByDesc('date_ouverture')->first();
+                if ($session) {
+                    Transaction::create([
+                        'session_id'    => $session->id,
+                        'sortie_id'     => $existante->id,
+                        'montant'       => $infos['montantPaye'] ?? $existante->total_montant,
+                        'mode_paiement' => $infos['modePaiement'],
+                        'notes'         => 'Vente faite hors connexion',
+                    ]);
+                }
+            }
+            return [$existante, false];
+        }
+
+        $venduLe = Carbon::parse($infos['venduLe']);
+        if ($venduLe->isFuture()) $venduLe = Carbon::now();
+
+        $session = CaisseSession::where('boutique_id', $boutiqueId)
+            ->where('date_ouverture', '<=', $venduLe)
+            ->where(fn($q) => $q->whereNull('date_fermeture')->orWhere('date_fermeture', '>=', $venduLe))
+            ->orderByDesc('date_ouverture')
+            ->first()
+            ?? CaisseSession::where('boutique_id', $boutiqueId)->where('statut', 'OUVERTE')->orderByDesc('date_ouverture')->first();
+        if (!$session) {
+            throw new ConflictException('Aucune session de caisse pour ranger cette vente : ouvre la caisse puis renvoie-la', 'NO_ACTIVE_SESSION');
+        }
+
+        try {
+            $sortie = DB::transaction(function () use ($boutiqueId, $userId, $lignes, $infos, $venduLe, $session) {
+                $sortie = $this->creer($boutiqueId, $userId, 'VENTE', $lignes, [
+                    'remiseMontant' => $infos['remiseMontant'] ?? null,
+                    'notes'         => $infos['notes'] ?? null,
+                    'modeService'   => $infos['modeService'] ?? null,
+                    'tableLabel'    => $infos['tableLabel'] ?? null,
+                    'session'       => $session,
+                    'clientRef'     => $infos['clientRef'],
+                    'venduLe'       => $venduLe,
+                ]);
+                $transaction = Transaction::create([
+                    'session_id'    => $session->id,
+                    'sortie_id'     => $sortie->id,
+                    'montant'       => $infos['montantPaye'] ?? $sortie->total_montant,
+                    'mode_paiement' => $infos['modePaiement'],
+                    'notes'         => 'Vente faite hors connexion',
+                ]);
+                $transaction->forceFill(['created_at' => $venduLe])->save();
+                return $sortie;
+            });
+        } catch (QueryException $e) {
+            // Deux envois simultanés de la même vente : l'index unique a refusé le second.
+            $existante = Sortie::where('boutique_id', $boutiqueId)->where('client_ref', $infos['clientRef'])->first();
+            if ($existante) return [$existante, false];
+            throw $e;
+        }
+
+        return [$sortie, true];
     }
 
     /**

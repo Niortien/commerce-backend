@@ -137,6 +137,27 @@ class ProduitController extends Controller
      *     @OA\Response(response=201, description="Produit créé", @OA\JsonContent(ref="#/components/schemas/ApiResponse"))
      * )
      */
+    /** Import d'un catalogue entier (fichier CSV lu côté appareil). simulation = vérifier sans rien créer. */
+    public function import(Request $request, \App\Services\ImportCatalogue $import): JsonResponse
+    {
+        $data = $request->validate([
+            'simulation'  => 'sometimes|boolean',
+            'fournisseur' => 'sometimes|nullable|string|max:191',
+            'lignes'      => 'required|array|min:1|max:' . \App\Services\ImportCatalogue::MAX_LIGNES,
+            'lignes.*'    => 'array',
+        ]);
+
+        $rapport = $import->importer(
+            $this->tenantBoutiqueId($request),
+            $request->user()->id,
+            array_values($data['lignes']),
+            (bool) ($data['simulation'] ?? false),
+            $data['fournisseur'] ?? null,
+        );
+
+        return $this->success($rapport, $rapport['simulation'] ? 200 : 201);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $boutiqueId = $this->tenantBoutiqueId($request);
@@ -159,7 +180,19 @@ class ProduitController extends Controller
             'variantes.*.couleur'        => 'required_with:variantes|string',
             'variantes.*.quantiteStock'  => 'required_with:variantes|numeric|min:0',
             'variantes.*.seuilAlerte'    => 'sometimes|numeric|min:0',
+            'variantes.*.codeBarre'      => 'sometimes|nullable|string|max:64',
         ]);
+
+        $codes = [];
+        foreach ($data['variantes'] ?? [] as $v) {
+            $code = \App\Services\CodesBarres::normaliser($v['codeBarre'] ?? null);
+            if ($code === null) continue;
+            if (in_array($code, $codes, true)) {
+                throw new \App\Exceptions\ConflictException('Deux variantes ont le même code-barres', 'CODE_BARRE_PRIS');
+            }
+            \App\Services\CodesBarres::verifierLibre($boutiqueId, $code);
+            $codes[] = $code;
+        }
 
         $categorie = Categorie::where('boutique_id', $boutiqueId)->find($data['categorieId']);
         if (!$categorie) throw new NotFoundException('Categorie introuvable', 'CATEGORIE_NOT_FOUND');
@@ -210,6 +243,7 @@ class ProduitController extends Controller
                     'boutique_id'    => $boutiqueId,
                     'taille'         => $v['taille'],
                     'couleur'        => $v['couleur'],
+                    'code_barre'     => \App\Services\CodesBarres::normaliser($v['codeBarre'] ?? null),
                     'quantite_stock' => $v['quantiteStock'],
                     'seuil_alerte'   => $v['seuilAlerte'] ?? ($pieceUnique ? 0 : 5),
                     'created_at'     => $now,
@@ -302,9 +336,13 @@ class ProduitController extends Controller
             'couleur'       => 'required|string',
             'quantiteStock' => 'sometimes|numeric|min:0',
             'seuilAlerte'   => 'sometimes|numeric|min:0',
+            'codeBarre'     => 'sometimes|nullable|string|max:64',
         ]);
+        $code = \App\Services\CodesBarres::normaliser($data['codeBarre'] ?? null);
+        \App\Services\CodesBarres::verifierLibre($produit->boutique_id, $code);
 
         $variante = Variante::create([
+            'code_barre'     => $code,
             'produit_id'     => $produit->id,
             'boutique_id'    => $produit->boutique_id,
             'taille'         => $data['taille'],

@@ -32,12 +32,17 @@ class VarianteController extends Controller
             'taille'      => 'sometimes|string',
             'couleur'     => 'sometimes|string',
             'seuilAlerte' => 'sometimes|numeric|min:0',
+            'codeBarre'   => 'sometimes|nullable|string|max:64',
         ]);
 
         $map = ['taille' => 'taille', 'couleur' => 'couleur', 'seuilAlerte' => 'seuil_alerte'];
         $update = [];
         foreach ($map as $from => $to) {
             if (array_key_exists($from, $data)) $update[$to] = $data[$from];
+        }
+        if (array_key_exists('codeBarre', $data)) {
+            $update['code_barre'] = \App\Services\CodesBarres::normaliser($data['codeBarre']);
+            \App\Services\CodesBarres::verifierLibre($variante->boutique_id, $update['code_barre'], $variante->id);
         }
 
         if ((isset($update['taille']) || isset($update['couleur']))) {
@@ -57,6 +62,18 @@ class VarianteController extends Controller
 
         $variante->update($update);
         return $this->success($variante->fresh()->load('produit'));
+    }
+
+    /** Retrouver un article par son code-barres (scanner ou caméra). */
+    public function parCode(Request $request, string $code): JsonResponse
+    {
+        $variante = Variante::with('produit.categorie')
+            ->where('boutique_id', $this->tenantBoutiqueId($request))
+            ->where('code_barre', trim($code))
+            ->first();
+        if (!$variante) throw new \App\Exceptions\NotFoundException('Aucun article avec ce code-barres', 'CODE_BARRE_INCONNU');
+
+        return $this->success($variante);
     }
 
     public function destroy(Request $request, string $id): JsonResponse

@@ -14,7 +14,7 @@ class Sortie extends Model
     public $incrementing = false;
 
     protected $fillable = [
-        'reference', 'type', 'mode_service', 'table_label', 'total_avant_remise', 'remise_montant',
+        'reference', 'client_ref', 'type', 'mode_service', 'table_label', 'total_avant_remise', 'remise_montant',
         'total_montant', 'notes', 'user_id', 'boutique_id', 'transaction_id', 'client_id',
     ];
 
