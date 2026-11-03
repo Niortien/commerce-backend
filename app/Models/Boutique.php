@@ -15,9 +15,9 @@ class Boutique extends Model
 
     protected $fillable = [
         'nom', 'slug', 'type_commerce', 'adresse', 'ville', 'whatsapp', 'email', 'telephone',
-        'logo_url', 'is_active', 'statut',
+        'logo_url', 'is_active', 'statut', 'vitrine_active',
     ];
-    protected $casts = ['is_active' => 'boolean'];
+    protected $casts = ['is_active' => 'boolean', 'vitrine_active' => 'boolean'];
 
 
     public const STATUTS_ACTIFS = ['ESSAI', 'ACTIF'];

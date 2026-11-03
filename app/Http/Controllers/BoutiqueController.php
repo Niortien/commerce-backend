@@ -42,10 +42,15 @@ class BoutiqueController extends Controller
             'email'    => 'sometimes|nullable|email',
             'telephone'=> 'sometimes|nullable|string',
             'logoUrl'  => 'sometimes|nullable|string',
+            'vitrineActive' => 'sometimes|boolean',
         ]);
         if (array_key_exists('logoUrl', $data)) {
             $data['logo_url'] = $data['logoUrl'];
             unset($data['logoUrl']);
+        }
+        if (array_key_exists('vitrineActive', $data)) {
+            $data['vitrine_active'] = $data['vitrineActive'];
+            unset($data['vitrineActive']);
         }
 
         // Le type de commerce décide des pages de la boutique : seul le Super Admin le change.

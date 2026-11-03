@@ -88,7 +88,19 @@ class ProduitController extends Controller
         $total = $q->count();
         $data  = $q->skip(($page - 1) * $limit)->take($limit)->orderBy('created_at', 'desc')->get();
 
+        if (!$this->estSaBoutique($request, $boutiqueId)) {
+            $data->each->makeHidden(self::CHAMPS_PRIVES);
+        }
+
         return $this->paginated($data, $total, $page, $limit);
+    }
+
+    /** Ce que seul le personnel de la boutique voit : le catalogue public est lisible par tous. */
+    private const CHAMPS_PRIVES = ['prix_achat'];
+
+    private function estSaBoutique(Request $request, ?string $boutiqueId): bool
+    {
+        return $boutiqueId !== null && $request->user()?->boutique_id === $boutiqueId;
     }
 
     /**
@@ -98,10 +110,13 @@ class ProduitController extends Controller
      *     @OA\Response(response=404, description="Introuvable", @OA\JsonContent(ref="#/components/schemas/ErrorResponse"))
      * )
      */
-    public function show(string $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
         $p = Produit::with(['categorie', 'variantes', 'images'])->find($id);
         if (!$p) throw new NotFoundException('Produit introuvable', 'PRODUIT_NOT_FOUND');
+        if (!$this->estSaBoutique($request, $p->boutique_id)) {
+            $p->makeHidden(self::CHAMPS_PRIVES);
+        }
         return $this->success($p);
     }
 

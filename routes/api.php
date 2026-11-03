@@ -25,6 +25,7 @@ use App\Http\Controllers\SuperAdminRevenuController;
 use App\Http\Controllers\SuperAdminUserController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VarianteController;
+use App\Http\Controllers\VitrineController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -40,6 +41,9 @@ Route::prefix('v1')->group(function () {
     Route::get('produits/categories', [ProduitController::class, 'categories']);
     Route::get('produits',            [ProduitController::class, 'index']);
     Route::get('produits/{id}',       [ProduitController::class, 'show']);
+
+    // ── Vitrine en ligne d'une boutique (public, champs choisis) ───────────
+    Route::get('vitrine/{slug}', [VitrineController::class, 'show'])->middleware('throttle:60,1');
 
     // ── Lookbook (upload photo client, public) ─────────────────────────────
     Route::post('lookbook-photos', [LookbookPhotoController::class, 'store'])->middleware('throttle:10,1');
