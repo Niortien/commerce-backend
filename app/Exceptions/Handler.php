@@ -67,11 +67,13 @@ class Handler extends ExceptionHandler
                 'trace'   => $e->getTraceAsString(),
             ]);
 
+            // Classe, message et fichier restent dans le log : jamais dans la réponse,
+            // même avec APP_DEBUG=true, car ils renseignent un attaquant sur le serveur.
             return response()->json([
                 'error' => [
                     'code'    => 'INTERNAL_SERVER_ERROR',
-                    'message' => get_class($e) . ': ' . $e->getMessage(),
-                    'details' => ['file' => $e->getFile() . ':' . $e->getLine()],
+                    'message' => 'Erreur interne du serveur.',
+                    'details' => null,
                 ],
                 'path'  => $path,
                 'timestamp' => $ts,
