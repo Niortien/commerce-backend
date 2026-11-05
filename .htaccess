@@ -1,0 +1,19 @@
+# Sur l'hébergement mutualisé, la racine du site pointe sur la racine du projet.
+# Tout est réécrit vers public/ : seul public/ est servi par le web, le reste
+# du projet (.env, vendor/, storage/, composer.*, ...) devient inaccessible.
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Transmettre l'en-tête Authorization (JWT) jusqu'à Laravel
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Slash final retiré ici : dans public/, la redirection exposerait /public/
+    RewriteCond %{REQUEST_URI} !^/public/
+    RewriteCond %{REQUEST_URI} (.+)/$
+    RewriteRule ^ %1 [L,R=301]
+
+    RewriteCond %{REQUEST_URI} !^/public/
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>

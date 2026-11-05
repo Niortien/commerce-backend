@@ -1,0 +1,12 @@
+# storage/ (logs, sessions, cache) ne doit jamais être servi par le web.
+# Indispensable tant que la racine du site pointe sur la racine du projet
+# et non sur public/ : sans ce fichier, storage/logs/laravel.log est public.
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^ - [F,L]
+</IfModule>
+
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
