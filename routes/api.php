@@ -26,6 +26,7 @@ use App\Http\Controllers\SuperAdminUserController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VarianteController;
 use App\Http\Controllers\VitrineController;
+use App\Http\Controllers\WebVitalController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -48,6 +49,9 @@ Route::prefix('v1')->group(function () {
     // ── Lookbook (upload photo client, public) ─────────────────────────────
     Route::post('lookbook-photos', [LookbookPhotoController::class, 'store'])->middleware('throttle:10,1');
     Route::get('lookbook-photos/publiees', [LookbookPhotoController::class, 'publicIndex']);
+
+    // ── Vitesse réelle du site (Web Vitals envoyés par les navigateurs, sans donnée personnelle) ─
+    Route::post('web-vitals', [WebVitalController::class, 'store'])->middleware('throttle:60,1');
 
     // ── Protected routes ───────────────────────────────────────────────────
     Route::middleware(['auth:api', 'consultation'])->group(function () {
@@ -78,6 +82,7 @@ Route::prefix('v1')->group(function () {
             Route::get('audit-logs',           [AuditLogController::class, 'index']);
             Route::get('audit-logs/actions',   [AuditLogController::class, 'actions']);
             Route::get('revenus',              [SuperAdminRevenuController::class, 'index']);
+            Route::get('web-vitals',           [WebVitalController::class, 'index']);
 
             // Ouvrir l'espace d'un admin ou d'un caissier, en lecture seule
             Route::post('users/{id}/consulter',     [ConsultationController::class, 'utilisateur']);
