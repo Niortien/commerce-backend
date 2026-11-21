@@ -6,6 +6,7 @@ use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
 use Illuminate\Validation\ValidationException as LaravelValidationException;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Throwable;
 
@@ -59,6 +60,25 @@ class Handler extends ExceptionHandler
                     'path'  => $path,
                     'timestamp' => $ts,
                 ], 404);
+            }
+
+            // Autres erreurs HTTP voulues (trop de tentatives, méthode non permise, accès refusé…) :
+            // leur vrai statut, jamais un 500 « erreur serveur » qui fait croire à une panne.
+            if ($e instanceof HttpExceptionInterface) {
+                $status = $e->getStatusCode();
+                [$code, $message] = match ($status) {
+                    429 => ['TOO_MANY_REQUESTS', 'Trop de tentatives. Patientez une minute puis réessayez.'],
+                    403 => ['FORBIDDEN', 'Accès refusé.'],
+                    405 => ['METHOD_NOT_ALLOWED', 'Méthode non permise sur cette route.'],
+                    419 => ['SESSION_EXPIRED', 'Session expirée. Rechargez la page.'],
+                    default => ['HTTP_' . $status, $status >= 500 ? 'Erreur interne du serveur.' : 'Requête refusée.'],
+                };
+
+                return response()->json([
+                    'error' => ['code' => $code, 'message' => $message, 'details' => null],
+                    'path'  => $path,
+                    'timestamp' => $ts,
+                ], $status, $e->getHeaders());
             }
 
             \Illuminate\Support\Facades\Log::error('Unhandled API error', [

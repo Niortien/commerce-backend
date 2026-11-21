@@ -99,10 +99,12 @@ Route::prefix('v1')->group(function () {
             Route::post('conversations/{id}/read',     [ChatController::class, 'markRead']);
         });
 
+        // Profil et statut d'accès de sa boutique : lisible même suspendue ou expirée, pour que
+        // l'admin et les caissiers voient pourquoi le stock et la caisse sont bloqués.
+        Route::get('boutiques/me', [BoutiqueController::class, 'me'])->middleware('role:ADMIN,CAISSIER');
+
         // ── Espace boutique (ADMIN + CAISSIER) — nécessite un accès actif ──
         Route::middleware('boutique.active')->group(function () {
-
-            Route::get('boutiques/me',   [BoutiqueController::class, 'me']);
 
             // Produits (write)
             Route::post('produits',                        [ProduitController::class, 'store']);

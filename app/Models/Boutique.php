@@ -15,12 +15,18 @@ class Boutique extends Model
 
     protected $fillable = [
         'nom', 'slug', 'type_commerce', 'adresse', 'ville', 'whatsapp', 'email', 'telephone',
-        'logo_url', 'is_active', 'statut', 'vitrine_active',
+        'logo_url', 'is_active', 'statut', 'vitrine_active', 'suspension_cause', 'suspension_motif',
     ];
     protected $casts = ['is_active' => 'boolean', 'vitrine_active' => 'boolean'];
 
 
     public const STATUTS_ACTIFS = ['ESSAI', 'ACTIF'];
+    public const STATUTS = ['EN_ATTENTE', 'ESSAI', 'ACTIF', 'SUSPENDU', 'ARCHIVE'];
+
+    /** Suspension posée à la fin de l'abonnement : levée automatiquement par un renouvellement ou une prolongation. */
+    public const SUSPENSION_ABONNEMENT_EXPIRE = 'ABONNEMENT_EXPIRE';
+    /** Suspension décidée par le Super Admin : seul lui la lève. */
+    public const SUSPENSION_MANUELLE = 'MANUELLE';
 
     /**
      * Types de commerce : choisi à l'inscription, modifiable uniquement par le Super Admin.
@@ -35,33 +41,8 @@ class Boutique extends Model
     {
         parent::boot();
         static::creating(fn($m) => $m->id = (string) Str::uuid());
-
-        static::deleting(function (Boutique $boutique) {
-            // Détacher les utilisateurs sans les supprimer
-            User::where('boutique_id', $boutique->id)->update(['boutique_id' => null]);
-
-            // Variantes → cascade (lignes entree/sortie + mouvements)
-            $boutique->variantes->each->delete();
-
-            // Entrees → lignes (déjà supprimées par variantes, nettoyage des orphelines)
-            $boutique->entrees->each(function (Entree $entree) {
-                $entree->lignes()->delete();
-                $entree->delete();
-            });
-
-            // Sorties → lignes + transaction liée
-            $boutique->sorties->each(function (Sortie $sortie) {
-                $sortie->lignes()->delete();
-                $sortie->transaction()->delete();
-                $sortie->delete();
-            });
-
-            // Sessions caisse → transactions
-            $boutique->caisseSessions->each(function (CaisseSession $session) {
-                $session->transactions()->delete();
-                $session->delete();
-            });
-        });
+        // La suppression d'une boutique et de toutes ses données passe par App\Services\SuppressionBoutique
+        // (transaction, ordre compatible avec les clés étrangères, comptes de la boutique compris).
     }
 
     public function users(): HasMany { return $this->hasMany(User::class); }
@@ -74,6 +55,10 @@ class Boutique extends Model
     public function fournisseurs(): HasMany { return $this->hasMany(Fournisseur::class); }
     public function abonnements(): HasMany { return $this->hasMany(Abonnement::class); }
 
+    /**
+     * Abonnement courant (statut ACTIF), même si sa date de fin est passée : c'est lui qu'on affiche
+     * (« Mensuel, expiré le … ») et qu'on prolonge.
+     */
     public function abonnementActif(): ?Abonnement
     {
         return $this->abonnements()
@@ -82,31 +67,120 @@ class Boutique extends Model
             ->first();
     }
 
+    /** Abonnement qui donne réellement accès maintenant : statut ACTIF et date de fin à venir. */
+    public function abonnementEnCours(): ?Abonnement
+    {
+        return $this->abonnements()
+            ->where('statut', 'ACTIF')
+            ->where('date_fin', '>', now())
+            ->orderByDesc('date_fin')
+            ->first();
+    }
+
+    /** Statut d'accès attendu pour un plan : l'essai garde le statut ESSAI, un plan payant donne ACTIF. */
+    public static function statutPourPlan(string $plan): string
+    {
+        return $plan === 'ESSAI' ? 'ESSAI' : 'ACTIF';
+    }
+
+    /** Ouvre l'accès selon le plan et efface toute trace de suspension. */
+    public function activerPourPlan(string $plan): void
+    {
+        $this->update([
+            'statut'           => self::statutPourPlan($plan),
+            'is_active'        => true,
+            'suspension_cause' => null,
+            'suspension_motif' => null,
+        ]);
+    }
+
     /**
-     * Recalcule le statut de la boutique en fonction de son abonnement en
-     * cours (auto-expiration) et garde is_active synchronisé. À appeler à
-     * la connexion et sur les requêtes protégées (voir EnsureBoutiqueActive).
+     * Garde le statut d'accès cohérent avec les abonnements, dans les deux sens :
+     * - ESSAI/ACTIF sans abonnement en cours → SUSPENDU (cause ABONNEMENT_EXPIRE) ;
+     * - SUSPENDU pour expiration alors qu'un abonnement en cours existe à nouveau → accès rouvert.
+     * Une suspension MANUELLE, un archivage ou une boutique EN_ATTENTE ne sont jamais modifiés ici :
+     * ce sont des décisions du Super Admin.
+     *
+     * Appelée à la connexion, sur chaque requête métier (EnsureBoutiqueActive), sur /boutiques/me,
+     * dans les listes du Super Admin et après chaque modification d'abonnement.
      */
     public function synchroniserStatutAbonnement(): void
     {
-        if (in_array($this->statut, ['SUSPENDU', 'ARCHIVE', 'EN_ATTENTE'], true)) {
-            return; // décisions manuelles du Super Admin, on ne les écrase pas
-        }
+        $enCours = $this->abonnementEnCours();
 
-        $abonnement = $this->abonnementActif();
-        $expire = !$abonnement || $abonnement->date_fin->isPast();
+        if (in_array($this->statut, self::STATUTS_ACTIFS, true)) {
+            if ($enCours) {
+                return;
+            }
 
-        if ($expire && $this->statut !== 'SUSPENDU') {
-            $this->update(['statut' => 'SUSPENDU', 'is_active' => false]);
+            $this->update([
+                'statut'           => 'SUSPENDU',
+                'is_active'        => false,
+                'suspension_cause' => self::SUSPENSION_ABONNEMENT_EXPIRE,
+                'suspension_motif' => null,
+            ]);
             // Les Super Admins sont prévenus (une seule fois), sans ralentir la requête en cours.
             $boutique = $this;
             dispatch(fn () => app(\App\Services\AlertesSuperAdmin::class)->signalerFinSiTerminee($boutique))->afterResponse();
+            return;
         }
+
+        if ($this->suspendueParExpiration() && $enCours) {
+            $this->activerPourPlan($enCours->plan);
+        }
+    }
+
+    /** Suspendue automatiquement à la fin de l'abonnement (levée par un renouvellement). */
+    public function suspendueParExpiration(): bool
+    {
+        return $this->statut === 'SUSPENDU' && $this->suspension_cause === self::SUSPENSION_ABONNEMENT_EXPIRE;
+    }
+
+    /**
+     * Fermée par une décision du Super Admin : suspension manuelle (ou de cause inconnue, par prudence)
+     * ou archivage. Un renouvellement ne la rouvre que sur demande explicite.
+     */
+    public function fermeeParLeSuperAdmin(): bool
+    {
+        return $this->statut === 'ARCHIVE' || ($this->statut === 'SUSPENDU' && !$this->suspendueParExpiration());
     }
 
     public function accesAutorise(): bool
     {
         $this->synchroniserStatutAbonnement();
         return in_array($this->statut, self::STATUTS_ACTIFS, true);
+    }
+
+    /**
+     * Pourquoi l'accès est refusé, en clair pour l'admin et les caissiers de la boutique.
+     * Renvoie null si l'accès est ouvert.
+     */
+    public function messageAccesRefuse(): ?string
+    {
+        if (in_array($this->statut, self::STATUTS_ACTIFS, true)) {
+            return null;
+        }
+
+        return match (true) {
+            $this->statut === 'EN_ATTENTE' =>
+                "Votre boutique attend la confirmation de son abonnement. Contactez le support pour l'activer.",
+            $this->statut === 'ARCHIVE' =>
+                "Votre boutique est fermée (archivée) sur la plateforme. Contactez le support pour la rouvrir.",
+            $this->suspendueParExpiration() => $this->messageExpiration(),
+            default =>
+                "L'accès de votre boutique a été suspendu par la plateforme"
+                . ($this->suspension_motif ? " : {$this->suspension_motif}" : '')
+                . ". Contactez le support pour le rétablir.",
+        };
+    }
+
+    private function messageExpiration(): string
+    {
+        $dernier = $this->abonnementActif();
+        $essai = $dernier?->plan === 'ESSAI';
+        $quoi = $essai ? "La période d'essai de votre boutique" : "L'abonnement de votre boutique";
+        $date = $dernier ? ' le ' . $dernier->date_fin->format('d/m/Y') : '';
+
+        return "{$quoi} a pris fin{$date} : le stock et la caisse sont bloqués. Contactez le support pour le renouveler.";
     }
 }

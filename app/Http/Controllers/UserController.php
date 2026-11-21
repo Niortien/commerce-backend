@@ -101,6 +101,14 @@ class UserController extends Controller
             throw new DomainException("Seuls les comptes caissiers peuvent être supprimés depuis cet écran.", 403, 'FORBIDDEN');
         }
 
+        // Ses ventes, entrées et sessions de caisse le référencent : les supprimer fausserait l'historique.
+        if ($user->aDesOperations()) {
+            throw new \App\Exceptions\ConflictException(
+                "{$user->email} a déjà enregistré des ventes, des entrées ou des sessions de caisse : son compte ne peut pas être supprimé sans effacer cet historique.",
+                'USER_HAS_HISTORY'
+            );
+        }
+
         $user->delete();
         AuditLog::record($request->user()->id, 'USER_DESTROY', 'User', $id, "Suppression caissier {$user->email}");
         return $this->success($user);

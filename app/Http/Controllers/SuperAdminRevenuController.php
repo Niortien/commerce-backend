@@ -19,8 +19,13 @@ class SuperAdminRevenuController extends Controller
 {
     use ApiResponse;
 
-    /** Tarifs publics, en FCFA (voir le site et l'inscription). */
-    public const TARIFS = ['ESSAI' => 0, 'MENSUEL' => 10000, 'TRIMESTRIEL' => 27000, 'ANNUEL' => 96000];
+    /**
+     * Grille en vigueur avant le passage du mensuel à 5 000 F (novembre 2026). Elle ne sert qu'aux
+     * anciens abonnements enregistrés SANS montant, tous antérieurs à ce changement : depuis, chaque
+     * abonnement reçoit son montant à la création (Abonnement::TARIFS_FCFA), ce qui fige le prix payé.
+     * Ainsi les revenus passés ne sont pas recalculés au nouveau tarif.
+     */
+    public const TARIFS_HISTORIQUES = ['ESSAI' => 0, 'MENSUEL' => 10000, 'TRIMESTRIEL' => 27000, 'ANNUEL' => 96000];
     private const DUREE_MOIS = ['ESSAI' => 1, 'MENSUEL' => 1, 'TRIMESTRIEL' => 3, 'ANNUEL' => 12];
 
     public function index(Request $request): JsonResponse
@@ -94,7 +99,7 @@ class SuperAdminRevenuController extends Controller
 
     private function montant(Abonnement $a): float
     {
-        return $a->montant !== null ? (float) $a->montant : (float) (self::TARIFS[$a->plan] ?? 0);
+        return $a->montant !== null ? (float) $a->montant : (float) (self::TARIFS_HISTORIQUES[$a->plan] ?? 0);
     }
 
     /** Une valeur inconnue (ancien « MODE »…) compte comme vêtements, l'option historique. */

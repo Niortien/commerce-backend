@@ -62,6 +62,11 @@ class AuthController extends Controller
         }
 
         $user->load('boutique');
+        // Statut d'accès à jour dès la connexion (fin d'essai ou d'abonnement, renouvellement).
+        if ($user->boutique) {
+            $user->boutique->synchroniserStatutAbonnement();
+            $user->boutique->refresh();
+        }
         AuditLog::record($user->id, 'CONNEXION', 'User', $user->id, "Connexion de {$user->email}");
 
         $accessToken = JWTAuth::fromUser($user);
@@ -201,7 +206,8 @@ class AuthController extends Controller
                 'plan'        => 'ESSAI',
                 'statut'      => 'ACTIF',
                 'date_debut'  => now(),
-                'date_fin'    => now()->addDays(14),
+                'date_fin'    => now()->addDays(Abonnement::DUREE_ESSAI_JOURS),
+                'montant'     => Abonnement::TARIFS_FCFA['ESSAI'],
                 'notes'       => 'Essai gratuit créé via inscription en ligne.',
             ]);
 

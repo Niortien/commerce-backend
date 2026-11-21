@@ -28,10 +28,19 @@ class BoutiqueController extends Controller
     public function me(Request $request): JsonResponse
     {
         $boutiqueId = $this->tenantBoutiqueId($request);
-        $boutique = Boutique::findOrFail($boutiqueId);
+        $boutique = Boutique::find($boutiqueId);
+        if (!$boutique) {
+            throw new \App\Exceptions\NotFoundException('Boutique introuvable', 'BOUTIQUE_NOT_FOUND');
+        }
+
+        // Hors boutique.active : on remet ici le statut à jour (expiration ou renouvellement).
+        $boutique->synchroniserStatutAbonnement();
+        $boutique->refresh();
 
         $data = $boutique->toArray();
         $data['abonnementActif'] = $boutique->abonnementActif();
+        $data['accesAutorise'] = in_array($boutique->statut, Boutique::STATUTS_ACTIFS, true);
+        $data['messageAcces'] = $boutique->messageAccesRefuse();
 
         return $this->success($data);
     }

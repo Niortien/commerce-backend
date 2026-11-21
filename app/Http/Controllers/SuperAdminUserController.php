@@ -98,6 +98,14 @@ class SuperAdminUserController extends Controller
             throw new ConflictException('Impossible de supprimer votre propre compte', 'CANNOT_DELETE_SELF');
         }
 
+        // Ses opérations le référencent (clés étrangères) : refus explicite au lieu d'une erreur 500.
+        if ($user->aDesOperations()) {
+            throw new ConflictException(
+                "{$user->email} a déjà enregistré des ventes, des entrées ou des sessions de caisse : supprimez plutôt la boutique entière, ou gardez ce compte.",
+                'USER_HAS_HISTORY'
+            );
+        }
+
         $user->delete();
         AuditLog::record($request->user()->id, 'USER_DESTROY', 'User', $id, "Suppression utilisateur {$user->email} par le Super Admin");
         return $this->success($user);

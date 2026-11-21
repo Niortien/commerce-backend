@@ -105,9 +105,9 @@ class V2ImprovementsTest extends TestCase
         $this->assertDatabaseHas('audit_logs', ['entity_type' => 'Sortie', 'entity_id' => $sortie->id]);
     }
 
-    // ──────────────────── Archivage boutique au lieu de suppression cascade ────────────────────
+    // ──────────────────── Archivage (statut) ou suppression définitive (avec confirmation) ────────────────────
 
-    public function test_boutique_avec_historique_est_archivee_pas_supprimee(): void
+    public function test_archiver_une_boutique_garde_son_historique(): void
     {
         $superAdmin = $this->actingAsSuperAdmin();
         $boutique = Boutique::factory()->create();
@@ -116,9 +116,25 @@ class V2ImprovementsTest extends TestCase
             'user_id' => $superAdmin->id,
         ]);
 
-        $this->deleteJson("/api/v1/super-admin/boutiques/{$boutique->id}")->assertStatus(200);
+        $this->patchJson("/api/v1/super-admin/boutiques/{$boutique->id}/statut", ['statut' => 'ARCHIVE'])->assertStatus(200);
 
         $this->assertDatabaseHas('boutiques', ['id' => $boutique->id, 'is_active' => false, 'statut' => 'ARCHIVE']);
+        $this->assertDatabaseHas('entrees', ['reference' => 'ENT-TEST0001']);
+    }
+
+    public function test_boutique_avec_historique_est_supprimee_definitivement_apres_confirmation(): void
+    {
+        $superAdmin = $this->actingAsSuperAdmin();
+        $boutique = Boutique::factory()->create();
+        Entree::create([
+            'reference' => 'ENT-TEST0002', 'fournisseur' => 'X', 'total_cout' => '0.00', 'boutique_id' => $boutique->id,
+            'user_id' => $superAdmin->id,
+        ]);
+
+        $this->deleteJson("/api/v1/super-admin/boutiques/{$boutique->id}", ['confirmation' => $boutique->nom])->assertStatus(200);
+
+        $this->assertDatabaseMissing('boutiques', ['id' => $boutique->id]);
+        $this->assertDatabaseMissing('entrees', ['reference' => 'ENT-TEST0002']);
     }
 
     public function test_boutique_sans_historique_est_supprimee(): void
@@ -126,7 +142,7 @@ class V2ImprovementsTest extends TestCase
         $this->actingAsSuperAdmin();
         $boutique = Boutique::factory()->create();
 
-        $this->deleteJson("/api/v1/super-admin/boutiques/{$boutique->id}")->assertStatus(200);
+        $this->deleteJson("/api/v1/super-admin/boutiques/{$boutique->id}", ['confirmation' => $boutique->nom])->assertStatus(200);
 
         $this->assertDatabaseMissing('boutiques', ['id' => $boutique->id]);
     }

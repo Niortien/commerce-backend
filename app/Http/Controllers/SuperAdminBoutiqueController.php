@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Exceptions\ConflictException;
 use App\Exceptions\NotFoundException;
+use App\Exceptions\ValidationException;
+use App\Services\SuppressionBoutique;
 use App\Http\Traits\ApiResponse;
 use App\Models\Abonnement;
 use App\Models\AuditLog;
@@ -39,6 +41,11 @@ class SuperAdminBoutiqueController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        // Statuts remis à jour avant le filtre : une boutique dont l'essai vient de finir apparaît
+        // « Suspendue » même si personne ne s'y est connecté depuis.
+        Boutique::whereIn('statut', ['ESSAI', 'ACTIF', 'SUSPENDU'])->get()
+            ->each(fn (Boutique $b) => $b->synchroniserStatutAbonnement());
+
         $q = Boutique::withCount(['users', 'produits'])->orderBy('created_at', 'desc');
         if ($request->filled('statut')) $q->where('statut', $request->statut);
         if ($request->filled('search')) $q->where('nom', 'like', '%' . $request->search . '%');
@@ -56,12 +63,16 @@ class SuperAdminBoutiqueController extends Controller
 
     public function show(string $id): JsonResponse
     {
-        $b = Boutique::withCount(['users', 'produits'])->find($id);
+        $b = Boutique::find($id);
         if (!$b) throw new NotFoundException('Boutique introuvable', 'BOUTIQUE_NOT_FOUND');
+        $b->synchroniserStatutAbonnement();
 
+        $b = Boutique::withCount(['users', 'produits'])->find($id);
         $data = $b->toArray();
+        $data['abonnementActif'] = $b->abonnementActif();
         $data['abonnements'] = $b->abonnements()->orderByDesc('date_fin')->get();
         $data['admins'] = $b->users()->where('role', 'ADMIN')->get(['id', 'email', 'created_at']);
+        $data['inventaire'] = app(SuppressionBoutique::class)->inventaire($b);
 
         return $this->success($data);
     }
@@ -89,7 +100,7 @@ class SuperAdminBoutiqueController extends Controller
         ]);
 
         $plan = $data['plan'] ?? 'ESSAI';
-        $dureeJours = $data['dureeJours'] ?? ($plan === 'ESSAI' ? 14 : 30);
+        $dureeJours = $data['dureeJours'] ?? Abonnement::DUREE_PLAN_JOURS[$plan];
 
         $result = DB::transaction(function () use ($request, $data, $plan, $dureeJours) {
             $boutique = Boutique::create([
@@ -120,6 +131,7 @@ class SuperAdminBoutiqueController extends Controller
                 'statut'      => 'ACTIF',
                 'date_debut'  => now(),
                 'date_fin'    => now()->addDays($dureeJours),
+                'montant'     => Abonnement::TARIFS_FCFA[$plan],
                 'cree_par_id' => $request->user()->id,
             ]);
 
@@ -180,13 +192,34 @@ class SuperAdminBoutiqueController extends Controller
         if (!$b) throw new NotFoundException('Boutique introuvable', 'BOUTIQUE_NOT_FOUND');
 
         $data = $request->validate([
-            'statut' => 'required|in:EN_ATTENTE,ESSAI,ACTIF,SUSPENDU,ARCHIVE',
-            'motif'  => 'sometimes|nullable|string',
+            'statut' => 'required|in:' . implode(',', Boutique::STATUTS),
+            'motif'  => 'sometimes|nullable|string|max:255',
         ]);
+        $statut = $data['statut'];
+        $motif = isset($data['motif']) && trim($data['motif']) !== '' ? trim($data['motif']) : null;
+
+        if (in_array($statut, Boutique::STATUTS_ACTIFS, true)) {
+            // Réactiver sans abonnement en cours ne tiendrait pas : la boutique serait re-suspendue
+            // à sa première requête. On le dit au Super Admin au lieu de faire semblant.
+            $enCours = $b->abonnementEnCours();
+            if (!$enCours) {
+                $dernier = $b->abonnementActif();
+                throw new ConflictException(
+                    "Impossible de passer « {$b->nom} » en " . ($statut === 'ESSAI' ? 'essai' : 'actif')
+                    . ' : aucun abonnement en cours'
+                    . ($dernier ? ' (le dernier a pris fin le ' . $dernier->date_fin->format('d/m/Y') . ')' : '')
+                    . '. Enregistrez ou prolongez d\'abord un abonnement.',
+                    'ABONNEMENT_REQUIS',
+                    ['dateFin' => $dernier?->date_fin?->toISOString()]
+                );
+            }
+        }
 
         $b->update([
-            'statut'    => $data['statut'],
-            'is_active' => in_array($data['statut'], Boutique::STATUTS_ACTIFS, true),
+            'statut'           => $statut,
+            'is_active'        => in_array($statut, Boutique::STATUTS_ACTIFS, true),
+            'suspension_cause' => $statut === 'SUSPENDU' ? Boutique::SUSPENSION_MANUELLE : null,
+            'suspension_motif' => in_array($statut, ['SUSPENDU', 'ARCHIVE'], true) ? $motif : null,
         ]);
 
         AuditLog::record(
@@ -200,24 +233,43 @@ class SuperAdminBoutiqueController extends Controller
         return $this->success($b->fresh());
     }
 
-    public function destroy(Request $request, string $id): JsonResponse
+    /**
+     * Suppression DÉFINITIVE de la boutique et de toutes ses données (produits, stock, entrées,
+     * ventes, caisse, clients, abonnements, comptes admin et caissiers…), en une transaction.
+     * Pour garder l'historique, le Super Admin archive plutôt la boutique (statut ARCHIVE).
+     *
+     * Le nom exact de la boutique doit être renvoyé dans « confirmation » : un ancien écran ou un
+     * appel isolé ne peut pas tout effacer par erreur.
+     */
+    public function destroy(Request $request, string $id, SuppressionBoutique $suppression): JsonResponse
     {
         $b = Boutique::find($id);
         if (!$b) throw new NotFoundException('Boutique introuvable', 'BOUTIQUE_NOT_FOUND');
 
-        $aDesDonnees = $b->entrees()->exists() || $b->sorties()->exists() || $b->caisseSessions()->exists() || $b->produits()->exists();
-
-        if ($aDesDonnees) {
-            if ($b->statut === 'ARCHIVE') {
-                throw new ConflictException('Boutique déjà archivée', 'BOUTIQUE_ALREADY_ARCHIVED');
-            }
-            $b->update(['statut' => 'ARCHIVE', 'is_active' => false]);
-            AuditLog::record($request->user()->id, 'BOUTIQUE_ARCHIVE', 'Boutique', $b->id, "Archivage boutique {$b->nom} (données historiques conservées)");
-            return $this->success($b->fresh());
+        $confirmation = trim((string) $request->input('confirmation', ''));
+        if (mb_strtolower($confirmation) !== mb_strtolower(trim($b->nom))) {
+            throw new ValidationException(
+                "Pour supprimer définitivement « {$b->nom} », recopiez exactement son nom.",
+                'CONFIRMATION_SUPPRESSION_INVALIDE',
+                ['confirmation' => ["Le nom saisi ne correspond pas à « {$b->nom} »."]]
+            );
         }
 
-        $b->delete();
-        AuditLog::record($request->user()->id, 'BOUTIQUE_DESTROY', 'Boutique', $id, "Suppression boutique {$b->nom}");
-        return $this->success($b);
+        $nom = $b->nom;
+        $resultat = $suppression->supprimer($b);
+
+        AuditLog::record(
+            $request->user()->id,
+            'BOUTIQUE_DESTROY',
+            'Boutique',
+            $id,
+            "Suppression définitive de la boutique {$nom} : " . json_encode($resultat['supprime'], JSON_UNESCAPED_UNICODE)
+        );
+
+        return $this->success([
+            'id'       => $id,
+            'nom'      => $nom,
+            'supprime' => $resultat['supprime'],
+        ]);
     }
 }
